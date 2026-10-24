@@ -37,14 +37,23 @@
 <section id="sheet" class="sheet collapsed" aria-label="Panel">
   <div class="grab" id="grab" aria-hidden="true"></div>
   <nav class="tabs" role="tablist">
-    <button role="tab" data-tab="cerca" aria-selected="true">Cerca</button>
+    <button role="tab" data-tab="plan" aria-selected="true">Planear</button>
+    <button role="tab" data-tab="cerca" aria-selected="false">Cerca</button>
     <button role="tab" data-tab="dias" aria-selected="false">Días</button>
     <button role="tab" data-tab="diario" aria-selected="false">Diario</button>
     <button role="tab" data-tab="ajustes" aria-selected="false">Ajustes</button>
   </nav>
   <div class="summary" id="summary">Calculando el mapa…</div>
 
-  <div class="panel" id="p-cerca" role="tabpanel">
+  <div class="panel" id="p-plan" role="tabpanel">
+    <div class="days" id="planDays" role="group" aria-label="Día de la salida"></div>
+    <p id="planMsg" class="fc-text">Calculando las mejores zonas…</p>
+    <ol id="zones" class="spots"></ol>
+    <div class="slider"><label for="maxDrive">Máximo en coche desde casa</label><input type="range" id="maxDrive" min="10" max="90" step="5"><output id="maxDriveV"></output></div>
+    <p class="hint"><span id="planFrom"></span> <button id="homeHere" class="linkbtn" type="button">Usar mi posición como casa</button></p>
+  </div>
+
+  <div class="panel" id="p-cerca" role="tabpanel" hidden>
     <button id="analyzeBtn" class="btn primary wide" type="button">Buscar los mejores puntos en lo que veo</button>
     <p class="hint" id="analyzeHint">Usa los caminos reales de OpenStreetMap: evita lo más pisado y comprueba que puedas llegar en coche. Acerca el mapa a la zona que te interese (unos 5 km).</p>
     <ol id="spots" class="spots"></ol>

@@ -27,7 +27,7 @@ const SPECIES = {
   camagroc: { n: "Camagroc",      lat: "Craterellus lutescens", aff: { pb: .55, pn: .8, ps: 1, al: .65, ro: .6 }, tmin: [3, 12], tmax: [9, 20],  season: ["10-05", "10-30", "01-10", "02-15"], rainMin: 25, rainFull: 90, asp: .15, hollow: 1, win: [0, 8, 12, 22, 30] }
 };
 
-const DEFAULT_PREFS = { sp: "rovello", flat: 0.7, interior: 90, shade: 1, hollow: 1, pathMin: 60, walkMax: 600, minLevel: 1, opacity: 0.7, kids: false };
+const DEFAULT_PREFS = { sp: "rovello", flat: 0.7, interior: 90, shade: 1, hollow: 1, pathMin: 60, walkMax: 600, minLevel: 1, opacity: 0.7, kids: false, maxDrive: 45 };
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function interp(x, xs, ys) {
@@ -86,7 +86,7 @@ function rainScore(rain, tmax, target, s) {
 }
 // Nivel absoluto del índice (no relativo): lo que se muestra en puntos y ventanas
 const ABS = [[60, "Muy alta"], [45, "Alta"], [30, "Media"], [15, "Baja"], [0, "Muy baja"]];
-const absLevel = v => { for (let i = 0; i < ABS.length; i++) if (v >= ABS[i][0]) return 4 - i; return 0; };
+const absLevel = v => { v = Math.round(v); for (let i = 0; i < ABS.length; i++) if (v >= ABS[i][0]) return 4 - i; return 0; };
 const ABS_NAMES = ["Muy baja", "Baja", "Media", "Alta", "Muy alta"];
 
 /* ---------- Meteo por estación ----------
@@ -176,7 +176,7 @@ class Grid {
 }
 
 /* Índice 0–100 de toda la rejilla para una especie, fecha y preferencias. */
-function computeScores(grid, summ, prefs, date) {
+function computeScores(grid, summ, prefs, date, step = 1) {
   const s = SPECIES[prefs.sp], W = grid.W, H = grid.H, BS = 16;
   const out = new Float32Array(grid.n).fill(NaN);
   const Rst = {}; for (const k in summ) Rst[k] = rainScore(summ[k].rain, summ[k].tmax, date, s).R;
@@ -188,6 +188,7 @@ function computeScores(grid, summ, prefs, date) {
     const mix = forestMix(la, lo, grid.zones); let Hf = 0; for (const t in mix) Hf += mix[t] * (s.aff[t] || 0);
     const S = seasonF(s, date), R = clamp(m.R, .05, 1);
     for (let i = bi; i < Math.min(H, bi + BS); i++) for (let j = bj; j < Math.min(W, bj + BS); j++) {
+      if (step > 1 && (i % step || j % step)) continue;
       const k = i * W + j, fl = grid.flags[k]; if (!(fl & 1)) continue;
       if (fl & 2) { out[k] = 0; continue; }
       const Ff = clamp((grid.tr8[k] / 255 - .35) / .45, 0, 1); if (Ff <= 0) { out[k] = 0; continue; }
@@ -217,6 +218,41 @@ function thresholds(grid, sc) {
 }
 const levelOf = (v, th) => v >= th.t3 ? 3 : v >= th.t2 ? 2 : v >= th.t1 ? 1 : 0;
 const LEVEL_NAMES = ["Baja", "Media", "Alta", "Muy alta"];
+
+/* ---------- Planificar la salida: ranking de municipios ----------
+   muniArr: id de municipio por celda (0 = fuera). Devuelve, por municipio, el percentil 99 del índice
+   (lo que vale lo mejor de la zona) y el mejor punto (máximo de la media 3×3 de la rejilla muestreada). */
+function zoneRanking(grid, sc, muniArr, munis, step) {
+  const W = grid.W, H = grid.H, vals = {}, best = {};
+  for (let i = step; i < H - step; i += step) for (let j = step; j < W - step; j += step) {
+    const k = i * W + j, v = sc[k], m = muniArr[k]; if (!m || !(v > 0)) continue;
+    (vals[m] || (vals[m] = [])).push(v);
+    let sum = 0, c = 0; for (let a = -step; a <= step; a += step) for (let b = -step; b <= step; b += step) { const u = sc[k + a * W + b]; if (u > 0) { sum += u; c++; } }
+    const mv = c >= 6 ? sum / 9 : 0;
+    if (!best[m] || mv > best[m].mv) best[m] = { mv, k, i, j };
+  }
+  const out = [];
+  for (const mu of munis) {
+    const v = vals[mu.id]; if (!v || v.length < 20 || !best[mu.id]) continue;
+    v.sort((a, b) => a - b); const q = v[Math.min(v.length - 1, Math.floor(v.length * .99))]; // lo mejor de la zona
+    const b = best[mu.id], k = b.k;
+    out.push({ id: mu.id, n: mu.n, q, lat: grid.latOf(b.i), lon: grid.lonOf(b.j), slope: grid.slope(k), aspect: grid.aspect(k), edge: grid.edge(k), tree: grid.tree(k), z: grid.z(k), good: v.filter(x => x >= 30).length * step * step });
+  }
+  return out.sort((a, b) => b.q - a.q);
+}
+// Añade la previsión (desde mañana) a las series de cada estación: lluvia, mínima y máxima diarias
+function extendStations(raw, fc, todayKey) {
+  const st = {};
+  for (const [c, s0] of Object.entries(raw.stations)) {
+    const f = fc[c], s = { rain: Object.assign({}, s0.rain), tmin: Object.assign({}, s0.tmin || {}), tmax: Object.assign({}, s0.tmax || {}), tmin7: s0.tmin7, tmax7: s0.tmax7 };
+    if (f) {
+      const adj = -.006 * ((STATIONS[c] ? STATIONS[c].alt : 400) - (f.elevation ?? 400));
+      f.daily.time.forEach((t, i) => { if (t > todayKey) { s.rain[t] = f.daily.precipitation_sum[i] || 0; s.tmin[t] = f.daily.temperature_2m_min[i] + adj; s.tmax[t] = f.daily.temperature_2m_max[i] + adj; } });
+    }
+    st[c] = s;
+  }
+  return Object.assign({}, raw, { stations: st });
+}
 
 /* ---------- Análisis de una ventana con caminos reales (OpenStreetMap vía Overpass) ---------- */
 const NO_CAR = /^(no|private|forestry|agricultural|delivery|customers|permit)$/;
@@ -292,4 +328,4 @@ function analyzeWindow(grid, sc, th, bbox, ways, prefs, me) {
   };
 }
 
-if (typeof module !== "undefined") module.exports = { STATIONS, SPECIES, DEFAULT_PREFS, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };
+if (typeof module !== "undefined") module.exports = { STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };

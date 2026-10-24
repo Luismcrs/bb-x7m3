@@ -1,6 +1,6 @@
 /* Bolets Bages · app */
 "use strict";
-const VERSION = "1.1 · 24-10-2026";
+const VERSION = "1.2 · 24-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -9,8 +9,11 @@ const LS = {
 const App = {
   prefs: Object.assign({}, DEFAULT_PREFS, LS.get("bb.prefs", {})),
   grid: null, raw: null, summ: null, scores: null, th: null, me: null, heading: null, follow: false,
-  ways: null, analysis: LS.get("bb.lastAnalysis", null), diary: LS.get("bb.diary", []), guide: null, fc: null, meteoInfo: null
+  ways: null, analysis: LS.get("bb.lastAnalysis", null), diary: LS.get("bb.diary", []), guide: null, fc: null, meteoInfo: null,
+  date: null, plan: null, home: LS.get("bb.home", { lat: 41.7245, lon: 1.8265, n: "Manresa" }), munis: null, muniArr: null
 };
+const isToday = d => !d || dayKey(d) === dayKey(new Date());
+const dayName = d => isToday(d) ? "hoy" : dayKey(d) === dayKey(addDays(new Date(), 1)) ? "mañana" : d.toLocaleDateString("es-ES", { weekday: "long", day: "numeric" });
 const fmt = (v, d = 0) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d });
 const fmtDist = m => m == null ? "–" : m < 1000 ? fmt(Math.round(m / 10) * 10) + " m" : fmt(m / 1000, 1) + " km";
 const DIRS = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"], DIRL = ["norte", "noreste", "este", "sureste", "sur", "suroeste", "oeste", "noroeste"];
@@ -49,7 +52,7 @@ bases[baseName].addTo(map);
 let tileErr = 0, tileOk = 0; bases[baseName].on("tileload", () => tileOk++);
 bases[baseName].on("tileerror", () => { if (++tileErr === 12 && tileOk === 0 && baseName.includes("ICGC")) { map.removeLayer(bases[baseName]); baseName = "OpenTopoMap"; bases[baseName].addTo(map); toast("El mapa del ICGC no responde: cambio a OpenTopoMap"); } });
 map.on("baselayerchange", e => { baseName = e.name; LS.set("bb.base", baseName); });
-const layerProb = L.layerGroup(), layerCar = L.layerGroup(), layerSpots = L.layerGroup().addTo(map), layerFinds = L.layerGroup().addTo(map);
+const layerProb = L.layerGroup(), layerCar = L.layerGroup(), layerSpots = L.layerGroup().addTo(map), layerFinds = L.layerGroup().addTo(map), layerPlan = L.layerGroup().addTo(map);
 L.control.layers(bases, { "Probabilidad": layerProb, "Accesos en coche (OSM)": layerCar, "Puntos": layerSpots, "Diario": layerFinds }, { position: "topright", collapsed: true }).addTo(map);
 layerProb.addTo(map); layerCar.addTo(map);
 L.control.scale({ imperial: false, position: "bottomright" }).addTo(map);
@@ -64,8 +67,10 @@ async function loadPixels(url) {
 async function loadGrid() {
   setStatus("Cargando relieve y bosque…");
   const meta = await fetchJSON("data/meta.json");
-  const [t, f, e] = await Promise.all(["data/terrain.png", "data/forest.png", "data/elev.png"].map(loadPixels));
+  const [t, f, e, mu, mj] = await Promise.all([...["data/terrain.png", "data/forest.png", "data/elev.png", "data/munis.png"].map(loadPixels), fetchJSON("data/munis.json")]);
   App.grid = new Grid(meta, t, f, e);
+  App.muniArr = new Uint8Array(App.grid.n); for (let i = 0, p = 0; i < App.grid.n; i++, p += 4) App.muniArr[i] = mu[p];
+  App.munis = mj;
 }
 
 /* ---------- Meteo (Meteocat en directo, con copia de seguridad) ---------- */
@@ -97,9 +102,10 @@ async function loadMeteo(force) {
     else { App.raw = await fetchJSON("data/meteo-fallback.json"); toast("Sin conexión con Meteocat: uso datos guardados del " + App.raw.lastDay); }
   }
 }
+function summaryAt(raw, date) { const o = {}; for (const [c, st] of Object.entries(raw.stations)) o[c] = stationSummary(st, date); return o; }
 function summarize() {
-  const today = new Date(); App.summ = {};
-  for (const [c, st] of Object.entries(App.raw.stations)) App.summ[c] = stationSummary(st, today);
+  const d = App.date || new Date();
+  App.summ = summaryAt(!isToday(d) && App.plan ? App.plan.ext : App.raw, d);
 }
 
 /* ---------- Cálculo y capa de probabilidad ---------- */
@@ -108,8 +114,11 @@ const imerc = y => (2 * Math.atan(Math.exp(y)) - Math.PI / 2) * 180 / Math.PI;
 let overlay = null;
 function recompute() {
   const t0 = performance.now();
-  App.scores = computeScores(App.grid, App.summ, App.prefs, new Date());
+  App.scores = computeScores(App.grid, App.summ, App.prefs, App.date || new Date());
   App.th = thresholds(App.grid, App.scores);
+  // «lo mejor del Bages» = la mejor zona (percentil 99 de su municipio), igual que en Planear
+  const zr = App.munis ? zoneRanking(App.grid, App.scores, App.muniArr, App.munis, 2) : [];
+  App.bestQ = zr.length ? zr[0].q : App.th.max; App.bestZone = zr[0] || null;
   renderOverlay(); updateSummary();
   if (App.ways) runAnalysis(false);
   console.log("cálculo", Math.round(performance.now() - t0), "ms");
@@ -141,8 +150,9 @@ function cellInfo(lat, lon) {
   const v = App.scores[k]; return { k, v, level: v > 0 ? absLevel(v) : 0, rel: v > 0 ? levelOf(v, App.th) : 0, slope: g.slope(k), aspect: g.aspect(k), z: g.z(k), tree: g.tree(k), edge: g.edge(k) };
 }
 function updateSummary() {
-  const s = SPECIES[App.prefs.sp], mx = App.th.max;
-  let t = s.n + " hoy: probabilidad " + ABS_NAMES[absLevel(mx)].toLowerCase() + " incluso en las mejores zonas del Bages (índice máx. " + fmt(mx) + " de 100)";
+  const s = SPECIES[App.prefs.sp], mx = App.bestQ, lv = absLevel(mx);
+  let t = s.n + " " + dayName(App.date) + ": probabilidad " + ABS_NAMES[lv].toLowerCase() + (lv <= 1 ? " incluso" : "") + " en la mejor zona del Bages" + (App.bestZone ? " (" + App.bestZone.n + ", índice " + fmt(mx) + ")" : " (índice " + fmt(mx) + ")");
+  if (!isToday(App.date)) t += " · el mapa muestra la previsión de ese día";
   if (App.me) { const ci = cellInfo(App.me.lat, App.me.lon); if (ci) t += " · donde estás: " + fmt(ci.v) + " (" + ABS_NAMES[ci.level].toLowerCase() + ")"; }
   if (App.fcBest) t += " · mejor día próximo: " + App.fcBest;
   $("#summary").textContent = t;
@@ -462,13 +472,110 @@ $("#importFile").onchange = async e => {
   e.target.value = "";
 };
 
+/* ---------- Planear la salida (antes de salir de casa) ---------- */
+async function fetchStationsForecast() {
+  const codes = Object.keys(App.raw.stations).filter(c => STATIONS[c]);
+  const lat = codes.map(c => STATIONS[c].lat.toFixed(3)).join(","), lon = codes.map(c => STATIONS[c].lon.toFixed(3)).join(",");
+  const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon + "&daily=precipitation_sum,temperature_2m_max,temperature_2m_min&timezone=Europe%2FMadrid&forecast_days=8";
+  try {
+    let j = await fetchJSON(url, 20000); if (!Array.isArray(j)) j = [j];
+    const fc = {}; codes.forEach((c, i) => { if (j[i] && j[i].daily) fc[c] = j[i]; }); LS.set("bb.fcSt", { at: Date.now(), fc }); return fc;
+  } catch (e) { const c = LS.get("bb.fcSt", null); return c && Date.now() - c.at < 24 * 3600e3 ? c.fc : null; }
+}
+const avgRain = (fc, k) => { const v = Object.values(fc).map(f => (f && f.daily.precipitation_sum[k]) || 0); return v.reduce((a, b) => a + b, 0) / Math.max(1, v.length); };
+const estDrive = z => Math.round(kmDist(App.home.lat, App.home.lon, z.lat, z.lon) * 1.35 / 50 * 60 + 6);
+let planBusy = false;
+async function planInit(force) {
+  if (!App.grid || !App.raw || !App.munis) return;
+  if (App.plan && !force && App.plan.sp === App.prefs.sp && App.plan.kids === App.prefs.kids && App.plan.day === dayKey(new Date())) { renderPlan(); return; }
+  if (planBusy) return; planBusy = true;
+  $("#planMsg").textContent = "Calculando las mejores zonas para los próximos días…"; $("#zones").innerHTML = ""; $("#planDays").innerHTML = "";
+  try {
+    const fc = await fetchStationsForecast();
+    const today = new Date(), ext = fc ? extendStations(App.raw, fc, dayKey(today)) : App.raw, N = fc ? 7 : 1, days = [];
+    for (let k = 0; k < N; k++) {
+      const date = addDays(today, k), sc = computeScores(App.grid, summaryAt(ext, date), App.prefs, date, 3);
+      const zones = zoneRanking(App.grid, sc, App.muniArr, App.munis, 3);
+      days.push({ date, zones, best: zones.length ? zones[0].q : 0, rain: fc ? avgRain(fc, k) : 0 });
+      await new Promise(r => setTimeout(r, 0));
+    }
+    App.plan = { days, ext, sel: App.plan ? Math.min(App.plan.sel, N - 1) : 0, sp: App.prefs.sp, kids: App.prefs.kids, day: dayKey(today), noFc: !fc, drive: {} };
+    renderPlan();
+  } catch (e) { console.error(e); $("#planMsg").textContent = "No he podido calcular el plan. Prueba otra vez en un momento."; }
+  finally { planBusy = false; }
+}
+function renderPlan() {
+  const P = App.plan; if (!P) return;
+  $("#planFrom").textContent = "Salgo desde: " + App.home.n + ".";
+  const box = $("#planDays"); box.innerHTML = "";
+  P.days.forEach((d, i) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "day"; b.setAttribute("aria-pressed", i === P.sel);
+    const lv = absLevel(d.best);
+    b.innerHTML = "<b>" + (i === 0 ? "Hoy" : i === 1 ? "Mañana" : esc(d.date.toLocaleDateString("es-ES", { weekday: "short", day: "numeric" }))) + '</b><i style="background:' + LV_COL[lv] + '"></i><span>' + ABS_NAMES[lv] + "</span>" + (d.rain >= 1 ? "<span>💧" + fmt(d.rain) + " mm</span>" : "");
+    b.onclick = () => { P.sel = i; renderPlan(); };
+    box.append(b);
+  });
+  const d = P.days[P.sel], maxD = App.prefs.maxDrive;
+  const zs = d.zones.map(z => Object.assign({}, z, { drive: P.drive[z.id + "@" + P.sel] ?? null, est: estDrive(z) }));
+  const show = zs.filter(z => (z.drive ?? z.est) <= maxD).slice(0, 6);
+  const bestDay = P.days.reduce((a, x, i) => x.best > P.days[a].best ? i : a, 0);
+  let msg = "Para " + dayName(d.date) + ", lo mejor del Bages tiene probabilidad " + ABS_NAMES[absLevel(d.best)].toLowerCase() + " (índice " + fmt(d.best) + ").";
+  if (absLevel(d.best) <= 1) msg += " No merece mucho la pena salir.";
+  if (bestDay !== P.sel && P.days[bestDay].best > d.best + 5) msg += " El mejor día de la semana es " + dayName(P.days[bestDay].date) + " (" + ABS_NAMES[absLevel(P.days[bestDay].best)].toLowerCase() + ").";
+  if (P.noFc) msg += " Sin conexión con la previsión: solo puedo calcular hoy.";
+  msg += show.length ? " Estas son las mejores zonas a menos de " + maxD + " min:" : " No hay zonas a menos de " + maxD + " min: sube el máximo en coche.";
+  $("#planMsg").textContent = msg;
+  const ol = $("#zones"); ol.innerHTML = ""; layerPlan.clearLayers();
+  show.forEach((z, i) => {
+    L.marker([z.lat, z.lon], { icon: L.divIcon({ className: "", html: '<div class="zone-ico" style="background:' + LV_COL[absLevel(z.q)] + '">' + (i + 1) + "</div>", iconSize: [28, 28], iconAnchor: [14, 14] }) })
+      .bindTooltip(z.n + " · " + ABS_NAMES[absLevel(z.q)]).on("click", () => openPlanZone(z, d.date)).addTo(layerPlan);
+    const li = document.createElement("li"); li.className = "spot"; const lv = absLevel(z.q), dI = dirIdx(z.aspect);
+    const drive = (z.drive != null ? z.drive : "~" + z.est) + " min en coche";
+    const ha = Math.round(z.good * .071);
+    li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[lv] + '">' + (i + 1) + '</span><span class="tt"><b>' + esc(z.n) + " · " + ABS_NAMES[lv] + "</b><small>" + esc(drive + " · mejor sitio: " + (z.slope < 6 ? "llano" : z.slope < 12 ? "suave" : "inclinado") + (z.slope >= 4 ? ", mira al " + DIRL[dI] : "") + ", " + fmtDist(z.edge) + " dentro del bosque" + (ha > 0 ? " · " + fmt(ha) + " ha de zona media o mejor" : "")) + '</small></span><span class="sc">' + fmt(z.q) + '</span></div><div class="acts"></div>';
+    const acts = li.querySelector(".acts");
+    acts.append(mkBtn("Ver zona y buscar puntos", () => openPlanZone(z, d.date), "primary small"));
+    acts.append(mkBtn("Ir en coche", () => goByCar(z.lat, z.lon), "small"));
+    ol.append(li);
+  });
+  if (show.length && !sheet.classList.contains("collapsed")) {
+    const sh = window.innerWidth >= 760 ? 0 : sheet.getBoundingClientRect().height, sw = window.innerWidth >= 760 ? 420 : 0;
+    map.fitBounds(L.latLngBounds(show.map(z => [z.lat, z.lon])).pad(.15), { paddingTopLeft: [sw + 20, 70], paddingBottomRight: [60, sh + 20], maxZoom: 12 });
+  }
+  driveTimes(show, P.sel);
+}
+async function driveTimes(zs, sel) {
+  const P = App.plan, need = zs.filter(z => P.drive[z.id + "@" + sel] == null); if (!need.length) return;
+  const coords = [App.home.lon.toFixed(5) + "," + App.home.lat.toFixed(5)].concat(need.map(z => z.lon.toFixed(5) + "," + z.lat.toFixed(5))).join(";");
+  try {
+    const r = await fetchJSON("https://router.project-osrm.org/table/v1/driving/" + coords + "?sources=0&annotations=duration", 15000);
+    need.forEach((z, i) => { const s = r.durations && r.durations[0][i + 1]; P.drive[z.id + "@" + sel] = s != null ? Math.round(s / 60) : estDrive(z); });
+    if (App.plan === P && P.sel === sel) renderPlan();
+  } catch (e) { need.forEach(z => P.drive[z.id + "@" + sel] = estDrive(z)); }
+}
+function openPlanZone(z, date) {
+  layerPlan.clearLayers();
+  const changed = (App.date ? dayKey(App.date) : dayKey(new Date())) !== dayKey(date);
+  App.date = isToday(date) ? null : date;
+  if (changed) { summarize(); recompute(); }
+  App.ways = null; collapseSheet();
+  map.once("moveend", () => { openSheet("cerca"); analyze(); });
+  map.flyTo([z.lat, z.lon], 14, { duration: 1.2 });
+}
+$("#homeHere").onclick = () => {
+  if (!App.me) { startGPS(false); toast("Buscando tu posición… vuelve a pulsar cuando aparezca el punto azul"); return; }
+  App.home = { lat: App.me.lat, lon: App.me.lon, n: "tu casa (guardada)" }; LS.set("bb.home", App.home);
+  if (App.plan) App.plan.drive = {}; renderPlan(); toast("Casa guardada");
+};
+
 /* ---------- Ajustes ---------- */
 const SL = {
   flat: v => v < .15 ? "da igual" : v < .5 ? "algo" : v < .85 ? "bastante" : "mucho",
   interior: v => v == 0 ? "da igual" : "pleno a " + v + " m del borde",
   pathMin: v => v == 0 ? "da igual" : "mejor a más de " + v + " m",
   walkMax: v => fmtDist(v), shade: v => fmt(v * 100) + " %", hollow: v => fmt(v * 100) + " %",
-  minLevel: v => ["", "25 % mejor", "10 % mejor", "3 % mejor"][v], opacity: v => fmt(v * 100) + " %"
+  minLevel: v => ["", "25 % mejor", "10 % mejor", "3 % mejor"][v], opacity: v => fmt(v * 100) + " %",
+  maxDrive: v => v + " min"
 };
 const HEAVY = new Set(["flat", "interior", "shade", "hollow"]);
 let rcT = null;
@@ -478,6 +585,7 @@ function bindPrefs() {
     el.oninput = () => {
       App.prefs[k] = +el.value; $("#" + k + "V").textContent = SL[k](+el.value); LS.set("bb.prefs", App.prefs);
       if (k === "opacity") { if (overlay) overlay.setOpacity(App.prefs.opacity); return; }
+      if (k === "maxDrive") { renderPlan(); return; }
       clearTimeout(rcT);
       rcT = setTimeout(() => { if (HEAVY.has(k)) recompute(); else if (k === "minLevel") renderOverlay(); else if (App.ways) runAnalysis(false); }, 300);
     };
@@ -486,7 +594,7 @@ function bindPrefs() {
   kd.onchange = () => {
     App.prefs.kids = kd.checked;
     if (kd.checked) { App.prefs.walkMax = Math.min(App.prefs.walkMax, 300); App.prefs.pathMin = Math.min(App.prefs.pathMin, 30); }
-    LS.set("bb.prefs", App.prefs); bindPrefs(); recompute();
+    LS.set("bb.prefs", App.prefs); bindPrefs(); recompute(); App.plan = null;
   };
 }
 $("#resetPrefs").onclick = () => { const sp = App.prefs.sp; App.prefs = Object.assign({}, DEFAULT_PREFS, { sp }); LS.set("bb.prefs", App.prefs); bindPrefs(); if (overlay) overlay.setOpacity(App.prefs.opacity); recompute(); toast("Ajustes por defecto"); };
@@ -498,7 +606,7 @@ function renderSpMenu() {
   for (const [k, s] of Object.entries(SPECIES)) {
     const b = document.createElement("button"); b.type = "button"; b.setAttribute("role", "option"); b.setAttribute("aria-selected", k === App.prefs.sp);
     b.innerHTML = esc(s.n) + "<small>" + esc(s.lat) + "</small>";
-    b.onclick = () => { App.prefs.sp = k; LS.set("bb.prefs", App.prefs); $("#spName").textContent = s.n; m.hidden = true; recompute(); renderSpotList(); if (!$("#p-dias").hidden) loadForecast(); };
+    b.onclick = () => { App.prefs.sp = k; LS.set("bb.prefs", App.prefs); $("#spName").textContent = s.n; m.hidden = true; recompute(); renderSpotList(); if (!$("#p-dias").hidden) loadForecast(); if (!$("#p-plan").hidden) planInit(); };
     m.append(b);
   }
 }
@@ -514,6 +622,7 @@ function openSheet(tab) {
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === tab));
   document.querySelectorAll(".panel").forEach(p => p.hidden = p.id !== "p-" + tab);
   if (tab === "dias") { loadForecast(); if (App.summ) renderMeteoTable(); }
+  if (tab === "plan") planInit();
 }
 function collapseSheet() { sheet.classList.add("collapsed"); }
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
@@ -532,7 +641,7 @@ window.addEventListener("error", e => console.warn(e.message));
   if (LS.get("bb.gpsOk", false)) startGPS(false);
   try {
     await Promise.all([loadGrid(), loadMeteo(false)]);
-    summarize(); recompute(); meteoStatus(); drawSpots();
+    summarize(); recompute(); meteoStatus(); drawSpots(); openSheet("plan");
     map.on("moveend", () => { if (App.summ) meteoStatus(); });
   } catch (e) { console.error(e); setStatus("Error al cargar los datos: " + e.message, "err"); }
   if ("serviceWorker" in navigator) {

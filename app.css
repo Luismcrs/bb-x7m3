@@ -112,3 +112,12 @@ table.meteo th{color:var(--muted);font-weight:500}
 .pop .btn{padding:6px 9px;font-size:.85rem}
 .pop dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:6px 0 0;font-size:.85rem}.pop dt{color:#5d6a60}.pop dd{margin:0}
 @media (min-width:760px){.sheet{left:12px;right:auto;width:400px;bottom:12px;border-radius:18px;max-height:calc(100vh - 90px)}.sheet.collapsed{max-height:118px}}
+.days{display:flex;gap:6px;overflow-x:auto;padding:2px 0 6px;-webkit-overflow-scrolling:touch}
+.day{flex:none;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:6px 10px;min-width:62px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;font-size:.8rem}
+.day b{font-size:.85rem}
+.day i{width:22px;height:6px;border-radius:3px;display:block}
+.day[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink);background:var(--paper)}
+.linkbtn{border:0;background:none;color:var(--accent);font:inherit;font-weight:650;padding:0;cursor:pointer;text-decoration:underline}
+.zone-meta{font-size:.8rem;color:var(--muted)}
+.grab,.tabs,.summary{flex:none}
+.zone-ico{min-width:28px;height:28px;padding:0 6px;border-radius:14px;border:2px solid #fff;color:#fff;font:700 13px var(--f-data);display:grid;place-items:center;box-shadow:0 1px 4px rgba(0,0,0,.45)}

@@ -1,8 +1,8 @@
 /* Bolets Bages · funcionamiento sin conexión */
-const V = "bb-v2";
+const V = "bb-v3";
 const SHELL = ["./", "index.html", "app.css", "app.js", "model.js", "manifest.webmanifest", "vendor/leaflet.js", "vendor/leaflet.css",
   "vendor/images/layers.png", "vendor/images/layers-2x.png", "vendor/images/marker-icon.png", "vendor/images/marker-shadow.png",
-  "icons/icon-192.png", "icons/icon-512.png", "data/meta.json", "data/terrain.png", "data/forest.png", "data/elev.png", "data/meteo-fallback.json"];
+  "icons/icon-192.png", "icons/icon-512.png", "data/meta.json", "data/terrain.png", "data/forest.png", "data/elev.png", "data/meteo-fallback.json", "data/munis.png", "data/munis.json"];
 const TILE_HOSTS = /(geoserveis\.icgc\.cat|tile\.opentopomap\.org|server\.arcgisonline\.com|tile\.openstreetmap\.org)/;
 const MAX_TILES = 3000;
 
