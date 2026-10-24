@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Bolets Bages</title>
+<meta name="description" content="Dónde buscar setas en el Bages: probabilidad calculada con meteo en directo, relieve y bosque real, con GPS.">
+<meta name="theme-color" content="#1f2a22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bolets">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="map" aria-label="Mapa"></div>
+
+<header class="top">
+  <button id="spBtn" class="chip" type="button" aria-haspopup="listbox"><span id="spName">Rovelló</span><span aria-hidden="true">▾</span></button>
+  <div id="status" class="status" role="status"><span class="dot"></span><span id="statusTxt">Cargando…</span></div>
+</header>
+
+<div id="spMenu" class="menu" role="listbox" hidden></div>
+
+<div class="fabs">
+  <button id="locBtn" class="fab" type="button" aria-label="Centrar en mi posición" title="Mi posición"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8" fill="none"/></svg></button>
+  <button id="followBtn" class="fab" type="button" aria-pressed="false" aria-label="Seguir mi posición" title="Seguir"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 18-7-4-7 4z"/></svg></button>
+</div>
+
+<div id="legend" class="legend" aria-hidden="true">
+  <span><i class="l3"></i>3 % mejor</span><span><i class="l2"></i>10 %</span><span><i class="l1"></i>25 %</span>
+</div>
+
+<section id="sheet" class="sheet collapsed" aria-label="Panel">
+  <div class="grab" id="grab" aria-hidden="true"></div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="cerca" aria-selected="true">Cerca</button>
+    <button role="tab" data-tab="dias" aria-selected="false">Días</button>
+    <button role="tab" data-tab="diario" aria-selected="false">Diario</button>
+    <button role="tab" data-tab="ajustes" aria-selected="false">Ajustes</button>
+  </nav>
+  <div class="summary" id="summary">Calculando el mapa…</div>
+
+  <div class="panel" id="p-cerca" role="tabpanel">
+    <button id="analyzeBtn" class="btn primary wide" type="button">Buscar los mejores puntos en lo que veo</button>
+    <p class="hint" id="analyzeHint">Usa los caminos reales de OpenStreetMap: evita lo más pisado y comprueba que puedas llegar en coche. Acerca el mapa a la zona que te interese (unos 5 km).</p>
+    <ol id="spots" class="spots"></ol>
+  </div>
+
+  <div class="panel" id="p-dias" role="tabpanel" hidden>
+    <p class="hint" id="fcWhere">Previsión para el centro del mapa.</p>
+    <div id="fcBars" class="bars" aria-label="Índice previsto por día"></div>
+    <p id="fcText" class="fc-text"></p>
+    <h3>Estaciones Meteocat</h3>
+    <div class="tablewrap"><table class="meteo" id="meteoTable"></table></div>
+  </div>
+
+  <div class="panel" id="p-diario" role="tabpanel" hidden>
+    <button id="addFind" class="btn primary wide" type="button">Apuntar un hallazgo aquí</button>
+    <form id="findForm" class="findform" hidden>
+      <label>Seta <select id="fSp"><option value="rovello">Rovelló</option><option value="llenega">Llenega negra</option><option value="fredolic">Fredolic</option><option value="camagroc">Camagroc</option><option value="molsa">Molsa</option><option value="ceps">Cep</option><option value="otra">Otra</option><option value="nada">Nada (zona vacía)</option></select></label>
+      <label>Cantidad <select id="fQty"><option value="1">Pocas</option><option value="2" selected>Bastantes</option><option value="3">Muchas</option><option value="0">Ninguna</option></select></label>
+      <label class="full">Nota <input id="fNote" type="text" maxlength="200" placeholder="Bajo pinos jóvenes, junto a la pista…"></label>
+      <p class="hint full" id="fWhere"></p>
+      <div class="row full"><button class="btn primary" type="submit">Guardar</button><button class="btn" type="button" id="fCancel">Cancelar</button></div>
+    </form>
+    <ol id="finds" class="finds"></ol>
+    <div class="row">
+      <button id="exportBtn" class="btn" type="button">Exportar</button>
+      <label class="btn" for="importFile">Importar</label><input id="importFile" type="file" accept="application/json,.json" hidden>
+    </div>
+    <p class="hint">El diario se guarda solo en este móvil. Exporta el archivo para pasármelo y ajustar el modelo con lo que encuentras.</p>
+  </div>
+
+  <div class="panel" id="p-ajustes" role="tabpanel" hidden>
+    <label class="toggle"><input type="checkbox" id="kids"><span>Con niños</span><small>Laderas suaves y cerca del coche</small></label>
+    <div class="slider"><label for="flat">Preferir terreno llano</label><input type="range" id="flat" min="0" max="1" step="0.05"><output id="flatV"></output></div>
+    <div class="slider"><label for="interior">Adentrarse en el bosque</label><input type="range" id="interior" min="0" max="250" step="10"><output id="interiorV"></output></div>
+    <div class="slider"><label for="pathMin">Lejos de caminos y senderos</label><input type="range" id="pathMin" min="0" max="250" step="10"><output id="pathMinV"></output></div>
+    <div class="slider"><label for="walkMax">Máximo andando desde el coche</label><input type="range" id="walkMax" min="100" max="2000" step="50"><output id="walkMaxV"></output></div>
+    <div class="slider"><label for="shade">Peso de las umbrías</label><input type="range" id="shade" min="0" max="2" step="0.1"><output id="shadeV"></output></div>
+    <div class="slider"><label for="hollow">Peso de las vaguadas</label><input type="range" id="hollow" min="0" max="2" step="0.1"><output id="hollowV"></output></div>
+    <div class="slider"><label for="minLevel">Mostrar en el mapa</label><input type="range" id="minLevel" min="1" max="3" step="1"><output id="minLevelV"></output></div>
+    <div class="slider"><label for="opacity">Opacidad de la capa</label><input type="range" id="opacity" min="0.2" max="1" step="0.05"><output id="opacityV"></output></div>
+    <div class="row"><button id="resetPrefs" class="btn" type="button">Valores por defecto</button><button id="refreshMeteo" class="btn" type="button">Actualizar meteo</button></div>
+    <details class="about"><summary>Cómo funciona</summary>
+      <p>Cada cuadrito de unos 30 m recibe un índice de 0 a 100. Se calcula multiplicando varios factores:</p>
+      <ul>
+        <li>La lluvia de las estaciones de Meteocat, que pesa al máximo entre 10 y 18 días después de caer.</li>
+        <li>La temperatura de la última semana, corregida por altitud.</li>
+        <li>La época del año.</li>
+        <li>El tipo de bosque, estimado por zonas.</li>
+        <li>El bosque real visto por satélite (ESA WorldCover, 10 m).</li>
+        <li>Lo lejos que estás del borde del bosque.</li>
+        <li>La pendiente, la orientación y las vaguadas.</li>
+      </ul>
+      <p>Los colores son relativos: rojo es el 3 % mejor del bosque del Bages; naranja, el 10 %; amarillo, el 25 %.</p>
+      <p>«Buscar puntos» descarga los caminos de OpenStreetMap de la zona que ves. Con ellos aparta lo más pisado y calcula dónde dejar el coche.</p>
+      <p>Datos: Meteocat (XEMA, datos abiertos de la Generalitat), Open-Meteo, Copernicus DEM, ESA WorldCover, OpenStreetMap. Es una estimación, no una garantía. Respeta los carteles, las fincas privadas y las batidas de caza.</p>
+      <p id="version" class="hint"></p>
+    </details>
+  </div>
+</section>
+
+<div id="guide" class="guide" hidden role="dialog" aria-label="Guía a pie">
+  <div class="arrow-wrap"><svg id="gArrow" viewBox="0 0 100 100" aria-hidden="true"><path d="M50 6 L78 86 L50 70 L22 86 Z"/></svg></div>
+  <div class="gtext"><b id="gDist">–</b><span id="gInfo">Buscando señal GPS…</span></div>
+  <button id="gStop" class="btn" type="button">Salir</button>
+</div>
+
+<div id="toast" class="toast" role="alert" hidden></div>
+
+<script src="vendor/leaflet.js"></script>
+<script src="model.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
