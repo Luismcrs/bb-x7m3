@@ -1,6 +1,6 @@
 /* Bolets Bages · app */
 "use strict";
-const VERSION = "1.0 · 24-10-2026";
+const VERSION = "1.1 · 24-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -15,7 +15,7 @@ const fmt = (v, d = 0) => v == null || isNaN(v) ? "–" : Number(v).toLocaleStri
 const fmtDist = m => m == null ? "–" : m < 1000 ? fmt(Math.round(m / 10) * 10) + " m" : fmt(m / 1000, 1) + " km";
 const DIRS = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"], DIRL = ["norte", "noreste", "este", "sureste", "sur", "suroeste", "oeste", "noroeste"];
 const dirIdx = a => Math.round(((a % 360) + 360) % 360 / 45) % 8;
-const LV_COL = ["#9aa79d", "#e0b000", "#f27f1a", "#c01e0d"];
+const LV_COL = ["#9aa79d", "#c9b26b", "#e0b000", "#f27f1a", "#c01e0d"];
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 let toastT = null;
 function toast(msg, ms = 3500) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, ms); }
@@ -72,12 +72,12 @@ async function loadGrid() {
 async function fetchMeteoLive() {
   const codes = Object.keys(STATIONS), today = new Date();
   const inList = codes.map(c => "'" + c + "'").join(",");
-  const since = dayKey(addDays(today, -30)), since8 = dayKey(addDays(today, -8));
+  const since = dayKey(addDays(today, -40));
   const base = "https://analisi.transparenciacatalunya.cat/resource/nzvn-apee.json?";
   const q = (sel, varc, from) => base + new URLSearchParams({ "$select": sel, "$where": "codi_variable='" + varc + "' AND codi_estacio IN(" + inList + ") AND data_lectura>='" + from + "T00:00:00'", "$group": "codi_estacio,d", "$limit": "20000" }).toString();
   const [rain, temp] = await Promise.all([
     fetchJSON(q("codi_estacio,date_trunc_ymd(data_lectura) AS d,sum(valor_lectura) AS v", "35", since)),
-    fetchJSON(q("codi_estacio,date_trunc_ymd(data_lectura) AS d,min(valor_lectura) AS mn,max(valor_lectura) AS mx", "32", since8))
+    fetchJSON(q("codi_estacio,date_trunc_ymd(data_lectura) AS d,min(valor_lectura) AS mn,max(valor_lectura) AS mx", "32", since))
   ]);
   const st = {}; for (const c of codes) st[c] = { rain: {}, tmin: {}, tmax: {} };
   let last = "";
@@ -89,9 +89,9 @@ async function fetchMeteoLive() {
 }
 async function loadMeteo(force) {
   const cached = LS.get("bb.meteo", null);
-  if (!force && cached && Date.now() - new Date(cached.fetched) < 2 * 3600e3) { App.raw = cached; return; }
+  if (!force && cached && cached.v === 2 && Date.now() - new Date(cached.fetched) < 2 * 3600e3) { App.raw = cached; return; }
   setStatus("Descargando meteo de Meteocat…");
-  try { App.raw = await fetchMeteoLive(); LS.set("bb.meteo", App.raw); }
+  try { App.raw = await fetchMeteoLive(); App.raw.v = 2; LS.set("bb.meteo", App.raw); }
   catch (e) {
     if (cached) { App.raw = cached; toast("Sin conexión con Meteocat: uso la última meteo guardada"); }
     else { App.raw = await fetchJSON("data/meteo-fallback.json"); toast("Sin conexión con Meteocat: uso datos guardados del " + App.raw.lastDay); }
@@ -138,12 +138,13 @@ function renderOverlay() {
 }
 function cellInfo(lat, lon) {
   const g = App.grid; const k = g.idx(lat, lon); if (k < 0 || !g.inb(k)) return null;
-  const v = App.scores[k]; return { k, v, level: v > 0 ? levelOf(v, App.th) : 0, slope: g.slope(k), aspect: g.aspect(k), z: g.z(k), tree: g.tree(k), edge: g.edge(k) };
+  const v = App.scores[k]; return { k, v, level: v > 0 ? absLevel(v) : 0, rel: v > 0 ? levelOf(v, App.th) : 0, slope: g.slope(k), aspect: g.aspect(k), z: g.z(k), tree: g.tree(k), edge: g.edge(k) };
 }
 function updateSummary() {
-  const s = SPECIES[App.prefs.sp]; let t = s.n + " · índice máximo hoy " + fmt(App.th.max);
-  if (App.me) { const ci = cellInfo(App.me.lat, App.me.lon); if (ci) t += " · donde estás: " + fmt(ci.v) + " (" + LEVEL_NAMES[ci.level].toLowerCase() + ")"; }
-  if (App.fcBest) t += " · mejor día: " + App.fcBest;
+  const s = SPECIES[App.prefs.sp], mx = App.th.max;
+  let t = s.n + " hoy: probabilidad " + ABS_NAMES[absLevel(mx)].toLowerCase() + " incluso en las mejores zonas del Bages (índice máx. " + fmt(mx) + " de 100)";
+  if (App.me) { const ci = cellInfo(App.me.lat, App.me.lon); if (ci) t += " · donde estás: " + fmt(ci.v) + " (" + ABS_NAMES[ci.level].toLowerCase() + ")"; }
+  if (App.fcBest) t += " · mejor día próximo: " + App.fcBest;
   $("#summary").textContent = t;
 }
 function meteoStatus() {
@@ -234,7 +235,7 @@ function renderSpotList() {
   if (A.sp !== App.prefs.sp) ol.insertAdjacentHTML("beforeend", '<li class="hint">Estos puntos son de otra especie. Vuelve a buscar.</li>');
   A.spots.forEach((s, i) => {
     const li = document.createElement("li"); li.className = "spot";
-    li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[s.level] + '">' + (i + 1) + '</span><span class="tt"><b>' + LEVEL_NAMES[s.level] + "</b><small>" + esc(spotLine(s)) + '</small></span><span class="sc" title="Índice ajustado a tus preferencias">' + fmt(s.adj) + '</span></div><div class="acts"></div>';
+    li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[s.level] + '">' + (i + 1) + '</span><span class="tt"><b>' + ABS_NAMES[s.level] + "</b><small>" + esc(spotLine(s)) + '</small></span><span class="sc" title="Índice ajustado a tus preferencias">' + fmt(s.adj) + '</span></div><div class="acts"></div>';
     const acts = li.querySelector(".acts");
     if (s.park) acts.append(mkBtn("Ir en coche", () => window.open(carUrl(s.park.lat, s.park.lon), "_blank"), "primary small"));
     acts.append(mkBtn("Guiarme a pie", () => startGuide(s.lat, s.lon, "Punto " + (i + 1)), "small"));
@@ -245,7 +246,7 @@ function renderSpotList() {
 function mkBtn(txt, fn, cls) { const b = document.createElement("button"); b.type = "button"; b.className = "btn " + (cls || ""); b.textContent = txt; b.onclick = fn; return b; }
 function showSpotPopup(i) {
   const s = App.analysis.spots[i]; const div = document.createElement("div"); div.className = "pop";
-  div.innerHTML = "<b>Punto " + (i + 1) + " · " + LEVEL_NAMES[s.level] + " (" + fmt(s.score) + ")</b><div>" + esc(spotLine(s)) + "</div><dl><dt>Altitud</dt><dd>" + fmt(s.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(s.tree * 100) + " % arbolado, " + fmtDist(s.edge) + " dentro</dd></dl><div class=\"acts\"></div>";
+  div.innerHTML = "<b>Punto " + (i + 1) + " · " + ABS_NAMES[s.level] + " (índice " + fmt(s.score) + ")</b><div>" + esc(spotLine(s)) + "</div><dl><dt>Altitud</dt><dd>" + fmt(s.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(s.tree * 100) + " % arbolado, " + fmtDist(s.edge) + " dentro</dd></dl><div class=\"acts\"></div>";
   const acts = div.querySelector(".acts");
   if (s.park) acts.append(mkBtn("Ir en coche", () => window.open(carUrl(s.park.lat, s.park.lon), "_blank"), "primary"));
   acts.append(mkBtn("Guiarme a pie", () => { map.closePopup(); startGuide(s.lat, s.lon, "Punto " + (i + 1)); }));
@@ -259,7 +260,7 @@ map.on("click", e => {
   if (!ci) { div.textContent = "Fuera del Bages."; }
   else {
     const d = dirIdx(ci.aspect);
-    div.innerHTML = "<b>" + (ci.v > 0 ? LEVEL_NAMES[ci.level] + " · índice " + fmt(ci.v) : "Sin bosque o terreno no apto") + "</b><dl><dt>Terreno</dt><dd>" + (ci.slope < 6 ? "llano" : ci.slope < 12 ? "suave" : "inclinado") + " (" + fmt(ci.slope) + "°)" + (ci.slope >= 4 ? ", mira al " + DIRL[d] : "") + "</dd><dt>Altitud</dt><dd>" + fmt(ci.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(ci.tree * 100) + " % arbolado" + (ci.edge > 0 ? ", " + fmtDist(ci.edge) + " dentro" : "") + "</dd></dl><div class=\"acts\"></div>";
+    div.innerHTML = "<b>" + (ci.v > 0 ? ABS_NAMES[ci.level] + " · índice " + fmt(ci.v) + " de 100" : "Sin bosque o terreno no apto") + "</b>" + (ci.v > 0 ? "<div>" + ["", "Entre el 25 % mejor del Bages hoy", "Entre el 10 % mejor del Bages hoy", "Entre el 3 % mejor del Bages hoy"][ci.rel] + "</div>" : "") + "<dl><dt>Terreno</dt><dd>" + (ci.slope < 6 ? "llano" : ci.slope < 12 ? "suave" : "inclinado") + " (" + fmt(ci.slope) + "°)" + (ci.slope >= 4 ? ", mira al " + DIRL[d] : "") + "</dd><dt>Altitud</dt><dd>" + fmt(ci.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(ci.tree * 100) + " % arbolado" + (ci.edge > 0 ? ", " + fmtDist(ci.edge) + " dentro" : "") + "</dd></dl><div class=\"acts\"></div>";
     const acts = div.querySelector(".acts"), la = e.latlng.lat, lo = e.latlng.lng;
     acts.append(mkBtn("Guiarme a pie", () => { map.closePopup(); startGuide(la, lo, "Punto marcado"); }));
     acts.append(mkBtn("Ir en coche", () => goByCar(la, lo), "primary"));
@@ -365,39 +366,56 @@ async function loadForecast() {
 function forecastIndex(lat, lon, fc) {
   const s = SPECIES[App.prefs.sp], g = App.grid, k0 = g.idx(lat, lon), z = k0 >= 0 ? g.z(k0) : 450;
   const mix = forestMix(lat, lon, g.zones); let Hf = 0; for (const t in mix) Hf += mix[t] * (s.aff[t] || 0);
-  const D = fc.daily, n = D.time.length, adj = -.006 * (z - (fc.elevation ?? z));
+  const D = fc.daily, adj = -.006 * (z - (fc.elevation ?? z)), todayK = dayKey(new Date());
+  // Serie diaria en el punto: lluvia y máxima observadas (interpoladas de las estaciones) + previsión desde mañana
+  const W = {}; let ws = 0;
+  for (const c of Object.keys(App.raw.stations)) { const st = STATIONS[c]; if (!st) continue; const d = Math.max(kmDist(lat, lon, st.lat, st.lon), 1.5); W[c] = 1 / (d * d); ws += W[c]; }
+  const rain = {}, tmaxS = {}, keys = new Set();
+  for (const c in W) for (const k in App.raw.stations[c].rain) keys.add(k);
+  for (const k of keys) {
+    let r = 0, t = 0, wt = 0;
+    for (const c in W) { const st = App.raw.stations[c]; r += W[c] * (+st.rain[k] || 0); if (st.tmax && st.tmax[k] != null) { t += W[c] * (st.tmax[k] - .006 * (z - STATIONS[c].alt)); wt += W[c]; } }
+    rain[k] = r / ws; if (wt) tmaxS[k] = t / wt;
+  }
+  D.time.forEach((t, f) => { if (t > todayK) { rain[t] = D.precipitation_sum[f] || 0; tmaxS[t] = D.temperature_2m_max[f] + adj; } });
   return D.time.map((t, k) => {
     const target = parseDay(t), summ = {};
     for (const [cde, st] of Object.entries(App.raw.stations)) summ[cde] = stationSummary(st, target);
-    const m = meteoAt(lat, lon, summ); let reff = m.reff, rain7 = m.rain7, dry = m.dryDays;
-    for (let f = 1; f <= k; f++) { const r = D.precipitation_sum[f] || 0, age = k - f; reff += r * lagW(age); if (age <= 6) rain7 += r; if (r >= 2) dry = Math.min(dry, age); }
+    const m = meteoAt(lat, lon, summ, null);
+    const rs = rainScore(rain, tmaxS, target, s);
+    let rain7 = 0, dry = 99; for (const kk in rain) { const a = daysBetween(parseDay(kk), target); if (a >= 0 && a <= 6) rain7 += rain[kk]; if (a >= 0 && rain[kk] >= 2 && a < dry) dry = a; }
     const fT = []; for (let f = Math.max(0, k - 6); f <= k; f++) fT.push([D.temperature_2m_min[f] + adj, D.temperature_2m_max[f] + adj]);
     const nObs = 7 - fT.length, tmo = m.t0min - .006 * z, txo = m.t0max - .006 * z;
     const tmin = (tmo * nObs + fT.reduce((a, v) => a + v[0], 0)) / 7, tmax = (txo * nObs + fT.reduce((a, v) => a + v[1], 0)) / 7;
-    const f = meteoFactors(s, { reff, rain7, dryDays: dry, t0min: tmin + .006 * z, t0max: tmax + .006 * z }, z, target);
+    const f = meteoFactors(s, { R: rs.R, rain7, dryDays: dry, t0min: tmin + .006 * z, t0max: tmax + .006 * z }, z, target);
     const best = (1 + Math.max(0, f.a)) * (1 + .3 * s.hollow);
-    return { t, date: target, idx: Math.max(0, Math.min(100, 100 * Hf * f.S * f.R * f.D * f.T * best / 1.15)), rain: D.precipitation_sum[k] || 0, tmin: D.temperature_2m_min[k], tmax: D.temperature_2m_max[k] };
+    return { t, date: target, idx: Math.max(0, Math.min(100, 100 * Hf * f.S * f.R * f.D * f.T * best / 1.15)), ev: rs.best, rain: D.precipitation_sum[k] || 0, tmin: D.temperature_2m_min[k], tmax: D.temperature_2m_max[k] };
   });
 }
 function renderForecast(days) {
-  const box = $("#fcBars"); box.innerHTML = ""; const mx = Math.max(50, ...days.map(d => d.idx)); let best = 0;
+  const box = $("#fcBars"); box.innerHTML = ""; const mx = Math.max(60, ...days.map(d => d.idx)); let best = 0;
   days.forEach((d, i) => { if (d.idx > days[best].idx) best = i; });
   days.forEach((d, i) => {
-    const lv = d.idx >= 55 ? 3 : d.idx >= 40 ? 2 : 1;
+    const lv = absLevel(d.idx);
     const el = document.createElement("div"); el.className = "bar" + (i === best ? " best" : "");
     el.innerHTML = "<b>" + fmt(d.idx) + '</b><i style="height:' + Math.max(4, d.idx / mx * 80) + "px;background:" + LV_COL[lv] + '"></i><span>' + d.date.toLocaleDateString("es-ES", { weekday: "short" }).slice(0, 2) + " " + d.date.getDate() + "</span><span>" + (d.rain >= 1 ? "💧" + fmt(d.rain) : "&nbsp;") + "</span>";
     box.append(el);
   });
   const b = days[best], wd = b.date.toLocaleDateString("es-ES", { weekday: "long", day: "numeric" });
   App.fcBest = best === 0 ? "hoy" : wd; updateSummary();
-  let txt = best === 0 ? "Hoy es el mejor día de los próximos diez (índice " + fmt(b.idx) + ")." : "Mejor día de los próximos diez: " + wd + " (índice " + fmt(b.idx) + "; hoy " + fmt(days[0].idx) + ").";
+  const lvTxt = v => ABS_NAMES[absLevel(v)].toLowerCase();
+  let txt = (best === 0 ? "Hoy es el mejor día de los próximos diez" : "Mejor día de los próximos diez: " + wd) + ", con probabilidad " + lvTxt(b.idx) + " (índice " + fmt(b.idx) + " de 100). Hoy: " + lvTxt(days[0].idx) + " (" + fmt(days[0].idx) + ").";
+  const e0 = days[best].ev;
+  if (e0) txt += " Cuenta sobre todo la lluvia que acabó el " + parseDay(e0.date).toLocaleDateString("es-ES", { day: "numeric", month: "long" }) + " (" + e0.mm + " mm)" + (e0.dryF < .8 ? ", que pierde fuerza por los días secos que vinieron después" : "") + ".";
+  else txt += " No hay ninguna lluvia reciente suficiente para que salgan setas.";
   const big = days.findIndex((d, i) => i > 0 && d.rain >= 10);
-  if (big > 0) { const from = addDays(days[big].date, 10); txt += " Se espera lluvia el " + days[big].date.toLocaleDateString("es-ES", { weekday: "long", day: "numeric" }) + " (" + fmt(days[big].rain) + " mm): las setas de esa lluvia saldrían a partir del " + from.toLocaleDateString("es-ES", { day: "numeric", month: "long" }) + "."; }
+  if (big > 0) { const from = addDays(days[big].date, 10); txt += " Se espera lluvia el " + days[big].date.toLocaleDateString("es-ES", { weekday: "long", day: "numeric" }) + " (" + fmt(days[big].rain) + " mm): las setas de esa lluvia saldrían hacia el " + from.toLocaleDateString("es-ES", { day: "numeric", month: "long" }) + "."; }
   $("#fcText").textContent = txt;
 }
 function renderMeteoTable() {
-  const rows = Object.entries(App.summ).map(([c, m]) => "<tr><td>" + esc(STATIONS[c].n) + "</td><td>" + fmt(m.rain21, 0) + "</td><td>" + fmt(m.reff, 0) + "</td><td>" + (m.lastRain ? m.lastRain.age + " d" : "–") + "</td><td>" + fmt(m.tmin7, 1) + " / " + fmt(m.tmax7, 1) + "</td></tr>").join("");
-  $("#meteoTable").innerHTML = "<thead><tr><th>Estación</th><th>Lluvia 21 d</th><th>Efectiva</th><th>Última</th><th>Mín / máx 7 d</th></tr></thead><tbody>" + rows + "</tbody>";
+  const s = SPECIES[App.prefs.sp], today = new Date();
+  const rows = Object.entries(App.summ).map(([c, m]) => { const rs = rainScore(m.rain, m.tmax, today, s); return "<tr><td>" + esc(STATIONS[c].n) + "</td><td>" + fmt(m.rain21, 0) + "</td><td>" + (m.lastRain ? m.lastRain.age + " d" : "–") + "</td><td>" + fmt(rs.R * 100) + "</td><td>" + fmt(m.tmin7, 1) + " / " + fmt(m.tmax7, 1) + "</td></tr>"; }).join("");
+  $("#meteoTable").innerHTML = "<thead><tr><th>Estación</th><th>Lluvia 21 d (mm)</th><th>Última lluvia fuerte</th><th>Lluvia útil hoy</th><th>Mín / máx 7 d</th></tr></thead><tbody>" + rows + "</tbody>";
 }
 
 /* ---------- Diario ---------- */

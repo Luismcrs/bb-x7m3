@@ -31,7 +31,7 @@
 </div>
 
 <div id="legend" class="legend" aria-hidden="true">
-  <span><i class="l3"></i>3 % mejor</span><span><i class="l2"></i>10 %</span><span><i class="l1"></i>25 %</span>
+  <span>Mejor de hoy:</span><span><i class="l3"></i>3 %</span><span><i class="l2"></i>10 %</span><span><i class="l1"></i>25 %</span>
 </div>
 
 <section id="sheet" class="sheet collapsed" aria-label="Panel">
@@ -87,9 +87,17 @@
     <div class="slider"><label for="opacity">Opacidad de la capa</label><input type="range" id="opacity" min="0.2" max="1" step="0.05"><output id="opacityV"></output></div>
     <div class="row"><button id="resetPrefs" class="btn" type="button">Valores por defecto</button><button id="refreshMeteo" class="btn" type="button">Actualizar meteo</button></div>
     <details class="about"><summary>Cómo funciona</summary>
-      <p>Cada cuadrito de unos 30 m recibe un índice de 0 a 100. Se calcula multiplicando varios factores:</p>
+      <p>Cada cuadrito de unos 30 m recibe un <b>índice de 0 a 100</b>. No es un porcentaje de probabilidad, sino una nota:</p>
       <ul>
-        <li>La lluvia de las estaciones de Meteocat, que pesa al máximo entre 10 y 18 días después de caer.</li>
+        <li><b>60 o más:</b> muy alta.</li>
+        <li><b>45–60:</b> alta.</li>
+        <li><b>30–45:</b> media.</li>
+        <li><b>15–30:</b> baja.</li>
+        <li><b>Menos de 15:</b> muy baja.</li>
+      </ul>
+      <p>El índice multiplica varios factores:</p>
+      <ul>
+        <li><b>La lluvia por episodios.</b> Cada episodio de lluvia da una salida de setas entre los días 10 y 17 después de acabar, y se apaga hacia el día 25. Cuanta más lluvia, más fuerza. Si después vienen muchos días secos, y más aún si hace calor, la salida se malogra. No se suman episodios.</li>
         <li>La temperatura de la última semana, corregida por altitud.</li>
         <li>La época del año.</li>
         <li>El tipo de bosque, estimado por zonas.</li>
@@ -97,7 +105,7 @@
         <li>Lo lejos que estás del borde del bosque.</li>
         <li>La pendiente, la orientación y las vaguadas.</li>
       </ul>
-      <p>Los colores son relativos: rojo es el 3 % mejor del bosque del Bages; naranja, el 10 %; amarillo, el 25 %.</p>
+      <p>Los <b>colores del mapa</b> son relativos: marcan el 3 %, el 10 % y el 25 % mejor del bosque del Bages en ese día. Un día malo también hay rojo, así que mira el nivel en la parte inferior.</p>
       <p>«Buscar puntos» descarga los caminos de OpenStreetMap de la zona que ves. Con ellos aparta lo más pisado y calcula dónde dejar el coche.</p>
       <p>Datos: Meteocat (XEMA, datos abiertos de la Generalitat), Open-Meteo, Copernicus DEM, ESA WorldCover, OpenStreetMap. Es una estimación, no una garantía. Respeta los carteles, las fincas privadas y las batidas de caza.</p>
       <p id="version" class="hint"></p>

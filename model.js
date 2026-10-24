@@ -24,20 +24,17 @@ const SPECIES = {
   rovello:  { n: "Rovelló",       lat: "Lactarius sanguifluus", aff: { pb: 1, pn: .9, ps: .8, al: .1, ro: .1 },  tmin: [5, 14], tmax: [13, 23], season: ["09-15", "10-10", "11-20", "12-20"], rainMin: 15, rainFull: 70, asp: 0,   hollow: .5 },
   llenega:  { n: "Llenega negra", lat: "Hygrophorus latitatus", aff: { pb: .8, pn: 1, ps: .9, al: .2, ro: .2 },  tmin: [2, 12], tmax: [10, 20], season: ["10-01", "10-25", "12-10", "01-15"], rainMin: 15, rainFull: 70, asp: .05, hollow: .6 },
   fredolic: { n: "Fredolic",      lat: "Tricholoma terreum",    aff: { pb: .7, pn: 1, ps: 1, al: .4, ro: .5 },  tmin: [2, 11], tmax: [9, 19],  season: ["10-10", "11-01", "12-15", "01-31"], rainMin: 15, rainFull: 65, asp: 0,   hollow: .5 },
-  camagroc: { n: "Camagroc",      lat: "Craterellus lutescens", aff: { pb: .55, pn: .8, ps: 1, al: .65, ro: .6 }, tmin: [3, 12], tmax: [9, 20],  season: ["10-05", "10-30", "01-10", "02-15"], rainMin: 25, rainFull: 90, asp: .15, hollow: 1 }
+  camagroc: { n: "Camagroc",      lat: "Craterellus lutescens", aff: { pb: .55, pn: .8, ps: 1, al: .65, ro: .6 }, tmin: [3, 12], tmax: [9, 20],  season: ["10-05", "10-30", "01-10", "02-15"], rainMin: 25, rainFull: 90, asp: .15, hollow: 1, win: [0, 8, 12, 22, 30] }
 };
 
 const DEFAULT_PREFS = { sp: "rovello", flat: 0.7, interior: 90, shade: 1, hollow: 1, pathMin: 60, walkMax: 600, minLevel: 1, opacity: 0.7, kids: false };
 
-// La lluvia pesa según los días que hace que cayó: máximo entre 10 y 18 días.
-const LAGX = [0, 5, 10, 18, 24, 30], LAGY = [.1, .35, 1, 1, .6, 0];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function interp(x, xs, ys) {
   if (x <= xs[0]) return ys[0];
   for (let i = 1; i < xs.length; i++) if (x <= xs[i]) return ys[i - 1] + (ys[i] - ys[i - 1]) * (x - xs[i - 1]) / (xs[i] - xs[i - 1]);
   return ys[ys.length - 1];
 }
-const lagW = age => age < 0 ? 0 : interp(age, LAGX, LAGY);
 const dayKey = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 const parseDay = s => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
 const daysBetween = (a, b) => Math.round((parseDay(dayKey(b)) - parseDay(dayKey(a))) / 86400000);
@@ -51,17 +48,58 @@ function seasonF(s, date) {
 const band = (v, lo, hi, m = 6) => { const d = v < lo ? lo - v : v > hi ? v - hi : 0; return clamp(1 - d / m * .8, .2, 1); };
 const kmDist = (la1, lo1, la2, lo2) => Math.hypot((la1 - la2) * 111.32, (lo1 - lo2) * 111.32 * Math.cos(41.78 * Math.PI / 180));
 
+/* ---------- Lluvia: modelo por episodios ----------
+   Cada episodio de lluvia (días seguidos con ≥1 mm, admitiendo un día seco en medio) da una salida de setas:
+   - nada los primeros 7 días; plena entre los días 10 y 17 después de acabar; se apaga hacia el día 25;
+   - cuanto más llueve, más potencial (rovelló: desde 15 mm, pleno a partir de ~56 mm);
+   - si después vienen muchos días secos, la salida se malogra (más si hace calor): a partir del 5.º día seco
+     resta un 15 % por día con máxima ≥22 °C, un 8 % entre 18 y 22 °C y un 4 % por debajo (mínimo, 30 %).
+   No se suman episodios: cuenta el mejor, más un 30 % del segundo.
+   Ajustado el 24-10-2026: tras ~70 mm entre el 29 sep y el 6 oct y 10 días secos, el 24 oct solo había molses. */
+const WINX = [0, 7, 10, 17, 25], WINY = [0, 0, 1, 1, 0];
+const addDaysM = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+function rainScore(rain, tmax, target, s) {
+  const keys = Object.keys(rain || {}).sort(); if (!keys.length) return { R: .05, best: null, events: [] };
+  const start = parseDay(keys[0]), N = daysBetween(start, target); if (N < 0) return { R: .05, best: null, events: [] };
+  const mm = new Float32Array(N + 1), tx = new Float32Array(N + 1).fill(NaN);
+  for (const k of keys) { const i = daysBetween(start, parseDay(k)); if (i >= 0 && i <= N) mm[i] = +rain[k] || 0; }
+  if (tmax) for (const k in tmax) { const i = daysBetween(start, parseDay(k)); if (i >= 0 && i <= N && tmax[k] != null) tx[i] = +tmax[k]; }
+  const ev = []; let i = 0;
+  while (i <= N) {
+    if (mm[i] < 1) { i++; continue; }
+    let tot = 0, end = i, j = i;
+    while (j <= N) { if (mm[j] >= 1) { tot += mm[j]; end = j; j++; } else if (j + 1 <= N && mm[j + 1] >= 1) j++; else break; }
+    ev.push({ end, tot }); i = j + 1;
+  }
+  const wx = s.win || WINX, span = (s.rainFull - s.rainMin) * .75, cs = [];
+  for (const e of ev) {
+    const P = clamp((e.tot - s.rainMin) / span, 0, 1); if (P <= 0) continue;
+    const age = N - e.end, w = interp(age, wx, WINY); if (w <= 0) continue;
+    let dry = 0, pen = 0;
+    for (let d = e.end + 1; d <= Math.min(N, e.end + 10); d++) if (mm[d] < 1) { dry++; if (dry > 4) { const t = isNaN(tx[d]) ? 20 : tx[d]; pen += t >= 22 ? .15 : t >= 18 ? .08 : .04; } }
+    const dd = clamp(1 - pen, .3, 1);
+    cs.push({ c: P * w * dd, P, w, dryF: dd, mm: Math.round(e.tot), age, date: dayKey(addDaysM(start, e.end)) });
+  }
+  cs.sort((a, b) => b.c - a.c);
+  const R = clamp((cs[0] ? cs[0].c : 0) + .3 * (cs[1] ? cs[1].c : 0), .05, 1);
+  return { R, best: cs[0] || null, events: cs };
+}
+// Nivel absoluto del índice (no relativo): lo que se muestra en puntos y ventanas
+const ABS = [[60, "Muy alta"], [45, "Alta"], [30, "Media"], [15, "Baja"], [0, "Muy baja"]];
+const absLevel = v => { for (let i = 0; i < ABS.length; i++) if (v >= ABS[i][0]) return 4 - i; return 0; };
+const ABS_NAMES = ["Muy baja", "Baja", "Media", "Alta", "Muy alta"];
+
 /* ---------- Meteo por estación ----------
    raw = { stations: { CL: { rain: {"2026-10-18": 11, ...}, tmin: {...}, tmax: {...} }, ... } }
    o bien (copia de seguridad) rain + tmin7/tmax7 ya agregados. */
 function stationSummary(st, target, extraRain) {
   const rain = Object.assign({}, st.rain || {}, extraRain || {});
-  let reff = 0, rain7 = 0, dry = 99, last = null;
+  let rain7 = 0, dry = 99, last = null;
   const keys = Object.keys(rain).sort();
   for (const k of keys) {
     const age = daysBetween(parseDay(k), target); const v = +rain[k] || 0;
     if (age < 0) continue;
-    reff += v * lagW(age); if (age <= 6) rain7 += v;
+    if (age <= 6) rain7 += v;
     if (v >= 2 && age < dry) dry = age;
   }
   // último episodio de lluvia de al menos 10 mm (días seguidos)
@@ -77,21 +115,21 @@ function stationSummary(st, target, extraRain) {
     const tk = Object.keys(st.tmin).filter(k => { const a = daysBetween(parseDay(k), target); return a >= 1 && a <= 7; });
     if (tk.length) { tmin7 = tk.reduce((s, k) => s + st.tmin[k], 0) / tk.length; tmax7 = tk.reduce((s, k) => s + (st.tmax[k] ?? st.tmin[k]), 0) / tk.length; }
   }
-  return { reff, rain7, dryDays: dry, lastRain: last, tmin7, tmax7, rain21: keys.filter(k => { const a = daysBetween(parseDay(k), target); return a >= 0 && a <= 20; }).reduce((s, k) => s + (+rain[k] || 0), 0) };
+  return { rain, tmax: st.tmax || null, rain7, dryDays: dry, lastRain: last, tmin7, tmax7, rain21: keys.filter(k => { const a = daysBetween(parseDay(k), target); return a >= 0 && a <= 20; }).reduce((s, k) => s + (+rain[k] || 0), 0) };
 }
 
 /* Meteo interpolada en un punto (IDW potencia 2). Las temperaturas se llevan a nivel del mar (−0,6 °C/100 m). */
-function meteoAt(lat, lon, summ) {
-  let w = 0, acc = { reff: 0, rain7: 0, t0min: 0, t0max: 0 }, near = null, nd = 1e9, wt = 0;
+function meteoAt(lat, lon, summ, Rst) {
+  let w = 0, acc = { R: 0, rain7: 0, t0min: 0, t0max: 0 }, near = null, nd = 1e9, wt = 0;
   for (const [k, st] of Object.entries(STATIONS)) {
     const m = summ[k]; if (!m) continue;
     const d = Math.max(kmDist(lat, lon, st.lat, st.lon), 1.5), wi = 1 / (d * d);
     if (d < nd) { nd = d; near = k; }
-    acc.reff += wi * m.reff; acc.rain7 += wi * m.rain7; w += wi;
+    acc.R += wi * (Rst && Rst[k] != null ? Rst[k] : 0); acc.rain7 += wi * m.rain7; w += wi;
     if (m.tmin7 != null && m.tmax7 != null) { acc.t0min += wi * (m.tmin7 + .006 * st.alt); acc.t0max += wi * (m.tmax7 + .006 * st.alt); wt += wi; }
   }
   if (!w) return null;
-  return { reff: acc.reff / w, rain7: acc.rain7 / w, t0min: wt ? acc.t0min / wt : 16, t0max: wt ? acc.t0max / wt : 24, near, nearKm: nd, dryDays: summ[near].dryDays, lastRain: summ[near].lastRain };
+  return { R: acc.R / w, rain7: acc.rain7 / w, t0min: wt ? acc.t0min / wt : 16, t0max: wt ? acc.t0max / wt : 24, near, nearKm: nd, dryDays: summ[near].dryDays, lastRain: summ[near].lastRain };
 }
 function forestMix(lat, lon, zones) {
   const mix = { pb: 0, pn: 0, ps: 0, al: 0, ro: 0 }; let w = 0;
@@ -100,7 +138,7 @@ function forestMix(lat, lon, zones) {
 }
 // Factores de meteo para una especie en un punto (sin el terreno)
 function meteoFactors(s, m, alt, date) {
-  const R = clamp((m.reff - s.rainMin) / (s.rainFull - s.rainMin), .05, 1);
+  const R = clamp(m.R, .05, 1);
   const tmin = m.t0min - .006 * alt, tmax = m.t0max - .006 * alt;
   let D = 1, a;
   if (m.rain7 < 3) D = tmax > 24 ? .7 : tmax > 20 ? .82 : .92;
@@ -141,13 +179,14 @@ class Grid {
 function computeScores(grid, summ, prefs, date) {
   const s = SPECIES[prefs.sp], W = grid.W, H = grid.H, BS = 16;
   const out = new Float32Array(grid.n).fill(NaN);
+  const Rst = {}; for (const k in summ) Rst[k] = rainScore(summ[k].rain, summ[k].tmax, date, s).R;
   const flat = prefs.kids ? 1 : prefs.flat, inter = prefs.interior, shade = prefs.shade, hol = prefs.hollow * s.hollow;
   const SLX = [0, 6, 12, 18, 25, 35, 90], SLY = [1, 1, .9, .72, .5, .3, .2];
   for (let bi = 0; bi < H; bi += BS) for (let bj = 0; bj < W; bj += BS) {
     const la = grid.latOf(Math.min(H - 1, bi + BS / 2)), lo = grid.lonOf(Math.min(W - 1, bj + BS / 2));
-    const m = meteoAt(la, lo, summ); if (!m) continue;
+    const m = meteoAt(la, lo, summ, Rst); if (!m) continue;
     const mix = forestMix(la, lo, grid.zones); let Hf = 0; for (const t in mix) Hf += mix[t] * (s.aff[t] || 0);
-    const S = seasonF(s, date), R = clamp((m.reff - s.rainMin) / (s.rainFull - s.rainMin), .05, 1);
+    const S = seasonF(s, date), R = clamp(m.R, .05, 1);
     for (let i = bi; i < Math.min(H, bi + BS); i++) for (let j = bj; j < Math.min(W, bj + BS); j++) {
       const k = i * W + j, fl = grid.flags[k]; if (!(fl & 1)) continue;
       if (fl & 2) { out[k] = 0; continue; }
@@ -247,10 +286,10 @@ function analyzeWindow(grid, sc, th, bbox, ways, prefs, me) {
     spots: picks.map(p => {
       const k = (i0 + p.i) * grid.W + (j0 + p.j), lat = grid.latOf(i0 + p.i), lon = grid.lonOf(j0 + p.j);
       const park = carSegs.length ? nearestOnSegments(lat, lon, carSegs) : null;
-      return { lat, lon, score: sc[k], adj: sm[p.q], level: levelOf(sc[k], th), slope: grid.slope(k), aspect: grid.aspect(k), z: grid.z(k), edge: grid.edge(k), tree: grid.tree(k),
+      return { lat, lon, score: sc[k], adj: sm[p.q], level: absLevel(sc[k]), slope: grid.slope(k), aspect: grid.aspect(k), z: grid.z(k), edge: grid.edge(k), tree: grid.tree(k),
         dPath: Math.round(dPath[p.q]), walk: park ? Math.round(park.dist * 1.3) : null, park, fromMe: me ? kmDist(me.lat, me.lon, lat, lon) : null };
     })
   };
 }
 
-if (typeof module !== "undefined") module.exports = { STATIONS, SPECIES, DEFAULT_PREFS, lagW, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };
+if (typeof module !== "undefined") module.exports = { STATIONS, SPECIES, DEFAULT_PREFS, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };
