@@ -89,6 +89,11 @@
     <div class="slider"><label for="flat">Preferir terreno llano</label><input type="range" id="flat" min="0" max="1" step="0.05"><output id="flatV"></output></div>
     <div class="slider"><label for="interior">Adentrarse en el bosque</label><input type="range" id="interior" min="0" max="250" step="10"><output id="interiorV"></output></div>
     <div class="slider"><label for="pathMin">Lejos de caminos y senderos</label><input type="range" id="pathMin" min="0" max="250" step="10"><output id="pathMinV"></output></div>
+    <h3>Tu coche</h3>
+    <div class="slider"><label for="carLevel">Caminos que acepta</label><input type="range" id="carLevel" min="0" max="3" step="1"><output id="carLevelV"></output></div>
+    <div class="slider"><label for="dirtMax">Máximo por camino de tierra</label><input type="range" id="dirtMax" min="0" max="6000" step="250"><output id="dirtMaxV"></output></div>
+    <p class="hint">El estado sale de OpenStreetMap (tipo de pista, firme y estado). Cuando falta, la pista cuenta como «normal». En el mapa, toca un camino de color para valorarlo («bien», «al límite» o «no pasa»): tu valoración manda.<br>Azul: asfalto · verde: pista buena · naranja: normal · rojo: mala. Discontinuo: no llegas con tus ajustes.</p>
+    <h3>Andando</h3>
     <div class="slider"><label for="walkMax">Máximo andando desde el coche</label><input type="range" id="walkMax" min="100" max="2000" step="50"><output id="walkMaxV"></output></div>
     <div class="slider"><label for="shade">Peso de las umbrías</label><input type="range" id="shade" min="0" max="2" step="0.1"><output id="shadeV"></output></div>
     <div class="slider"><label for="hollow">Peso de las vaguadas</label><input type="range" id="hollow" min="0" max="2" step="0.1"><output id="hollowV"></output></div>

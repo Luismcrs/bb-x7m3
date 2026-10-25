@@ -27,7 +27,7 @@ const SPECIES = {
   camagroc: { n: "Camagroc",      lat: "Craterellus lutescens", aff: { pb: .55, pn: .8, ps: 1, al: .65, ro: .6 }, tmin: [3, 12], tmax: [9, 20],  season: ["10-05", "10-30", "01-10", "02-15"], rainMin: 25, rainFull: 90, asp: .15, hollow: 1, win: [0, 8, 12, 22, 30] }
 };
 
-const DEFAULT_PREFS = { sp: "rovello", flat: 0.7, interior: 90, shade: 1, hollow: 1, pathMin: 60, walkMax: 600, minLevel: 1, opacity: 0.7, kids: false, maxDrive: 45 };
+const DEFAULT_PREFS = { sp: "rovello", flat: 0.7, interior: 90, shade: 1, hollow: 1, pathMin: 60, walkMax: 600, minLevel: 1, opacity: 0.7, kids: false, maxDrive: 45, carLevel: 2, dirtMax: 2000 };
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function interp(x, xs, ys) {
@@ -254,16 +254,67 @@ function extendStations(raw, fc, todayKey) {
   return Object.assign({}, raw, { stations: st });
 }
 
-/* ---------- Análisis de una ventana con caminos reales (OpenStreetMap vía Overpass) ---------- */
+/* ---------- Caminos: estado del firme y red accesible en coche (OpenStreetMap vía Overpass) ---------- */
 const NO_CAR = /^(no|private|forestry|agricultural|delivery|customers|permit)$/;
-function isDrivable(t) {
+const PAVED = /^(asphalt|concrete|paved|concrete:plates|concrete:lanes|paving_stones|sett|chipseal)$/;
+const GOODU = /^(compacted|fine_gravel)$/;
+const BADU = /^(ground|dirt|earth|grass|mud|sand|rock|rocks|pebblestone|woodchips|gravel_turf)$/;
+const ROAD_CLASS = ["Asfalto", "Pista buena", "Pista normal", "Pista mala"];
+const CAR_LEVELS = ["Solo asfalto", "Hasta pistas buenas", "Hasta pistas normales", "Cualquier pista (todoterreno)"];
+// 0 asfalto · 1 pista buena · 2 pista normal o sin datos · 3 pista mala / 4×4 · −1 no apto o prohibido para coches
+function roadClass(t) {
   const h = t.highway || "";
-  if (!/^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|road)(_link)?$/.test(h)) return false;
-  for (const k of ["access", "motor_vehicle", "motorcar", "vehicle"]) if (t[k] && NO_CAR.test(t[k])) return false;
-  if (h === "track" && /grade[45]/.test(t.tracktype || "")) return false;
-  return true;
+  if (!/^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|road)(_link)?$/.test(h)) return -1;
+  for (const k of ["access", "motor_vehicle", "motorcar", "vehicle"]) if (t[k] && NO_CAR.test(t[k])) return -1;
+  const s = t.surface || "", sm = t.smoothness || "", tt = t.tracktype || "";
+  if (t["4wd_only"] === "yes" || /^(very_bad|horrible|very_horrible|impassable)$/.test(sm) || /grade[45]/.test(tt) || BADU.test(s)) return 3;
+  if (PAVED.test(s)) return 0;
+  if (h !== "track") return /^(unpaved|gravel|compacted|fine_gravel)$/.test(s) ? (GOODU.test(s) ? 1 : 2) : 0;
+  if (tt === "grade1" || GOODU.test(s) || /^(excellent|good|intermediate)$/.test(sm)) return 1;
+  return 2;
 }
-// Distancia aproximada (chamfer 3-4) en metros desde celdas marcadas
+const isDrivable = t => roadClass(t) >= 0;
+// Clase efectiva con tu valoración: «bien» → pista buena, «al límite» → como pista mala, «no pasa» → cerrado
+function effClass(w, ratings) {
+  let c = roadClass(w.tags || {}); const r = ratings && ratings[w.id];
+  if (c < 0) return c; if (r === "ok") return Math.min(c, 1); if (r === "limite") return 3; if (r === "no") return -1; return c;
+}
+/* Red de caminos que acepta tu coche y metros de tierra necesarios desde el asfalto más cercano (Dijkstra). */
+function roadNetwork(ways, prefs) {
+  const lvl = prefs.carLevel ?? 2, maxDirt = lvl === 0 ? 0 : (prefs.dirtMax ?? 2000), nodes = new Map(), segs = [];
+  for (const w of ways) {
+    const c = effClass(w, prefs.ratings); w._cls = c;
+    if (c < 0 || c > lvl || !w.nodes || !w.geometry || w.nodes.length !== w.geometry.length) continue;
+    for (let i = 0; i < w.nodes.length; i++) { const id = w.nodes[i]; let n = nodes.get(id); if (!n) { n = { lat: w.geometry[i].lat, lon: w.geometry[i].lon, adj: [], paved: false }; nodes.set(id, n); } if (c === 0) n.paved = true; }
+    for (let i = 1; i < w.nodes.length; i++) {
+      const a = w.nodes[i - 1], b = w.nodes[i], A = nodes.get(a), B = nodes.get(b), len = kmDist(A.lat, A.lon, B.lat, B.lon) * 1000, dirt = c === 0 ? 0 : len;
+      A.adj.push([b, dirt]); B.adj.push([a, dirt]); segs.push({ a, b, c, way: w.id });
+    }
+  }
+  const dist = new Map(), heap = [];
+  const push = e => { heap.push(e); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
+  const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } } return top; };
+  for (const [id, n] of nodes) if (n.paved) { dist.set(id, 0); push([0, id]); }
+  while (heap.length) {
+    const [d, id] = pop(); if (d > (dist.get(id) ?? Infinity)) continue;
+    for (const [nb, w] of nodes.get(id).adj) { const nd = d + w; if (nd <= maxDirt && nd < (dist.get(nb) ?? Infinity)) { dist.set(nb, nd); push([nd, nb]); } }
+  }
+  const reach = segs.filter(sg => dist.has(sg.a) && dist.has(sg.b));
+  return { nodes, segs, reach, dist, maxDirt, hasPaved: [...nodes.values()].some(n => n.paved) };
+}
+// Punto de aparcamiento: el punto de la red accesible más cercano al sitio, con los metros de tierra para llegar
+function nearestParking(lat, lon, net) {
+  const cx = Math.cos(lat * Math.PI / 180) * 111320, cy = 110540; let best = null, bd = 1e12;
+  for (const sg of net.reach) {
+    const A = net.nodes.get(sg.a), B = net.nodes.get(sg.b);
+    const ax = (A.lon - lon) * cx, ay = (A.lat - lat) * cy, bx = (B.lon - lon) * cx, by = (B.lat - lat) * cy;
+    const vx = bx - ax, vy = by - ay, L = vx * vx + vy * vy, t = L ? clamp(-(ax * vx + ay * vy) / L, 0, 1) : 0;
+    const px = ax + t * vx, py = ay + t * vy, d = px * px + py * py;
+    if (d < bd) { bd = d; best = { lat: lat + py / cy, lon: lon + px / cx, dist: Math.sqrt(d), dirt: Math.round(net.dist.get(sg.a) * (1 - t) + net.dist.get(sg.b) * t), cls: sg.c }; }
+  }
+  return best;
+}
+// Distancia aproximada (chamfer) en metros desde celdas marcadas
 function chamfer(mask, w, h, dx, dy) {
   const INF = 1e9, d = new Float32Array(w * h); const dd = Math.hypot(dx, dy);
   for (let k = 0; k < w * h; k++) d[k] = mask[k] ? 0 : INF;
@@ -273,59 +324,44 @@ function chamfer(mask, w, h, dx, dy) {
     if (j < w - 1) v = Math.min(v, d[k + 1] + dx); if (i < h - 1) { v = Math.min(v, d[k + w] + dy); if (j < w - 1) v = Math.min(v, d[k + w + 1] + dd); if (j > 0) v = Math.min(v, d[k + w - 1] + dd); } d[k] = v; }
   return d;
 }
-function nearestOnSegments(lat, lon, segs) {
-  const cx = Math.cos(lat * Math.PI / 180) * 111320, cy = 110540; let best = null, bd = 1e12;
-  for (const g of segs) for (let i = 1; i < g.length; i++) {
-    const ax = (g[i - 1].lon - lon) * cx, ay = (g[i - 1].lat - lat) * cy, bx = (g[i].lon - lon) * cx, by = (g[i].lat - lat) * cy;
-    const vx = bx - ax, vy = by - ay, L = vx * vx + vy * vy; const t = L ? clamp(-(ax * vx + ay * vy) / L, 0, 1) : 0;
-    const px = ax + t * vx, py = ay + t * vy, d = px * px + py * py;
-    if (d < bd) { bd = d; best = { lat: lat + py / cy, lon: lon + px / cx, dist: Math.sqrt(d) }; }
-  }
-  return best;
-}
-/* ways: elementos 'way' de Overpass con geometry y tags. Devuelve puntos ordenados. */
+/* ways: elementos 'way' de Overpass (tags, nodes, geometry). Devuelve los mejores puntos a los que se llega con tu coche. */
 function analyzeWindow(grid, sc, th, bbox, ways, prefs, me) {
   const i0 = clamp(grid.rowOf(bbox.n), 0, grid.H - 1), i1 = clamp(grid.rowOf(bbox.s), 0, grid.H - 1);
   const j0 = clamp(grid.colOf(bbox.w), 0, grid.W - 1), j1 = clamp(grid.colOf(bbox.e), 0, grid.W - 1);
   const w = j1 - j0 + 1, h = i1 - i0 + 1; const dx = Math.abs(grid.dlon) * 111320 * Math.cos(41.78 * Math.PI / 180), dy = Math.abs(grid.dlat) * 111320;
-  const allM = new Uint8Array(w * h), carM = new Uint8Array(w * h); const carSegs = [];
+  const allM = new Uint8Array(w * h), carM = new Uint8Array(w * h);
   const mark = (M, la1, lo1, la2, lo2) => { // Bresenham sobre la ventana
     let y0 = grid.rowOf(la1) - i0, x0 = grid.colOf(lo1) - j0; const y1 = grid.rowOf(la2) - i0, x1 = grid.colOf(lo2) - j0;
+    if ((y0 < -50 && y1 < -50) || (x0 < -50 && x1 < -50) || (y0 > h + 50 && y1 > h + 50) || (x0 > w + 50 && x1 > w + 50)) return;
     const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1; let ex = Math.abs(x1 - x0), ey = -Math.abs(y1 - y0), err = ex + ey, guard = 0;
     while (guard++ < 20000) { if (x0 >= 0 && y0 >= 0 && x0 < w && y0 < h) M[y0 * w + x0] = 1; if (x0 === x1 && y0 === y1) break; const e2 = 2 * err; if (e2 >= ey) { err += ey; x0 += sx; } if (e2 <= ex) { err += ex; y0 += sy; } }
   };
-  for (const wy of ways) {
-    const g = wy.geometry; if (!g || g.length < 2) continue; const car = isDrivable(wy.tags || {});
-    for (let i = 1; i < g.length; i++) { mark(allM, g[i - 1].lat, g[i - 1].lon, g[i].lat, g[i].lon); if (car) mark(carM, g[i - 1].lat, g[i - 1].lon, g[i].lat, g[i].lon); }
-    if (car) carSegs.push(g);
-  }
+  for (const wy of ways) { const g = wy.geometry; if (!g || g.length < 2) continue; for (let i = 1; i < g.length; i++) mark(allM, g[i - 1].lat, g[i - 1].lon, g[i].lat, g[i].lon); }
+  const net = roadNetwork(ways, prefs);
+  for (const sg of net.reach) { const A = net.nodes.get(sg.a), B = net.nodes.get(sg.b); mark(carM, A.lat, A.lon, B.lat, B.lon); }
   const dPath = chamfer(allM, w, h, dx, dy), dCar = chamfer(carM, w, h, dx, dy);
   const adj = new Float32Array(w * h);
   for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) {
     const k = (i0 + i) * grid.W + (j0 + j), q = i * w + j, v = sc[k]; if (!(v > 0)) continue;
-    const walk = dCar[q] * 1.3; if (walk > prefs.walkMax) continue;
+    if (dCar[q] * 1.3 > prefs.walkMax) continue;
     const pf = prefs.pathMin > 0 ? .6 + .4 * clamp(dPath[q] / prefs.pathMin, 0, 1) : 1;
     adj[q] = v * pf;
   }
-  // suavizado 3×3 y máximos locales separados ≥ 300 m
   const sm = new Float32Array(w * h);
   for (let i = 1; i < h - 1; i++) for (let j = 1; j < w - 1; j++) { let s = 0, c = 0; for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const v = adj[(i + a) * w + j + b]; if (v > 0) { s += v; c++; } } sm[i * w + j] = c >= 6 ? s / 9 : 0; }
   const cand = []; for (let q = 0; q < w * h; q++) if (sm[q] > 0) cand.push(q);
   cand.sort((a, b) => sm[b] - sm[a]);
   const picks = [], sep = 300;
-  for (const q of cand) {
-    const i = Math.floor(q / w), j = q % w;
-    if (picks.every(p => Math.hypot((p.i - i) * dy, (p.j - j) * dx) >= sep)) { picks.push({ q, i, j }); if (picks.length >= 15) break; }
-  }
+  for (const q of cand) { const i = Math.floor(q / w), j = q % w; if (picks.every(p => Math.hypot((p.i - i) * dy, (p.j - j) * dx) >= sep)) { picks.push({ q, i, j }); if (picks.length >= 15) break; } }
   return {
-    window: { i0, j0, w, h }, nWays: ways.length, nCar: carSegs.length,
+    window: { i0, j0, w, h }, net,
     spots: picks.map(p => {
       const k = (i0 + p.i) * grid.W + (j0 + p.j), lat = grid.latOf(i0 + p.i), lon = grid.lonOf(j0 + p.j);
-      const park = carSegs.length ? nearestOnSegments(lat, lon, carSegs) : null;
+      const park = nearestParking(lat, lon, net);
       return { lat, lon, score: sc[k], adj: sm[p.q], level: absLevel(sc[k]), slope: grid.slope(k), aspect: grid.aspect(k), z: grid.z(k), edge: grid.edge(k), tree: grid.tree(k),
         dPath: Math.round(dPath[p.q]), walk: park ? Math.round(park.dist * 1.3) : null, park, fromMe: me ? kmDist(me.lat, me.lon, lat, lon) : null };
     })
   };
 }
 
-if (typeof module !== "undefined") module.exports = { STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };
+if (typeof module !== "undefined") module.exports = { roadClass, roadNetwork, nearestParking, effClass, ROAD_CLASS, CAR_LEVELS, STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };

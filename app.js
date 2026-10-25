@@ -1,6 +1,6 @@
 /* Bolets Bages · app */
 "use strict";
-const VERSION = "1.2 · 24-10-2026";
+const VERSION = "1.3 · 25-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -10,7 +10,7 @@ const App = {
   prefs: Object.assign({}, DEFAULT_PREFS, LS.get("bb.prefs", {})),
   grid: null, raw: null, summ: null, scores: null, th: null, me: null, heading: null, follow: false,
   ways: null, analysis: LS.get("bb.lastAnalysis", null), diary: LS.get("bb.diary", []), guide: null, fc: null, meteoInfo: null,
-  date: null, plan: null, home: LS.get("bb.home", { lat: 41.7245, lon: 1.8265, n: "Manresa" }), munis: null, muniArr: null
+  date: null, plan: null, ratings: LS.get("bb.ratings", {}), home: LS.get("bb.home", { lat: 41.7245, lon: 1.8265, n: "Manresa" }), munis: null, muniArr: null
 };
 const isToday = d => !d || dayKey(d) === dayKey(new Date());
 const dayName = d => isToday(d) ? "hoy" : dayKey(d) === dayKey(addDays(new Date(), 1)) ? "mañana" : d.toLocaleDateString("es-ES", { weekday: "long", day: "numeric" });
@@ -193,7 +193,9 @@ async function analyze() {
   const box = analysisBox(); if (!box) { toast("Esa zona queda fuera del Bages"); return; }
   const btn = $("#analyzeBtn"); btn.disabled = true; btn.textContent = "Descargando caminos…";
   try {
-    const q = "[out:json][timeout:30];way[\"highway\"](" + [box.s, box.w, box.n, box.e].map(v => v.toFixed(5)).join(",") + ");out tags geom;";
+    const bb = [box.s, box.w, box.n, box.e].map(v => v.toFixed(5)).join(","), M = .02;
+    const bx = [box.s - M, box.w - M * 1.3, box.n + M, box.e + M * 1.3].map(v => v.toFixed(5)).join(",");
+    const q = "[out:json][timeout:45];(way[\"highway\"](" + bb + ");way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|road)\"](" + bx + "););out body geom;";
     const data = await overpass(q);
     App.ways = { box, ways: data.elements.filter(x => x.type === "way" && x.geometry) };
     runAnalysis(true);
@@ -203,10 +205,11 @@ async function analyze() {
 }
 function runAnalysis(fit) {
   const { box, ways } = App.ways;
-  const res = analyzeWindow(App.grid, App.scores, App.th, box, ways, App.prefs, App.me);
-  // resaltar accesos en coche
-  layerCar.clearLayers();
-  for (const wy of ways) if (isDrivable(wy.tags || {})) L.polyline(wy.geometry.map(p => [p.lat, p.lon]), { color: "#1a5fb4", weight: 3, opacity: .55, interactive: false }).addTo(layerCar);
+  seedRatings(ways);
+  const res = analyzeWindow(App.grid, App.scores, App.th, box, ways, Object.assign({}, App.prefs, { ratings: App.ratings }), App.me);
+  App.net = res.net;
+  drawRoads(ways, res.net);
+  if (!res.net.hasPaved) toast("No encuentro carretera asfaltada cerca de esta zona: mueve el mapa o amplía la búsqueda");
   if (boxLayer) map.removeLayer(boxLayer);
   boxLayer = L.rectangle([[box.s, box.w], [box.n, box.e]], { color: "#1f2a22", weight: 1, dashArray: "4 6", fill: false, interactive: false }).addTo(map);
   App.analysis = { box, spots: res.spots, when: new Date().toISOString(), sp: App.prefs.sp };
@@ -216,6 +219,39 @@ function runAnalysis(fit) {
     if (!res.spots.length) toast("No hay zonas buenas que cumplan tus ajustes aquí. Prueba a subir la distancia andando o a mover el mapa.");
     else { openSheet("cerca"); }
   }
+}
+const ROAD_COL = ["#1a5fb4", "#2e8b57", "#e08a00", "#c0392b"];
+function drawRoads(ways, net) {
+  layerCar.clearLayers(); const ok = new Set(net.reach.map(s => s.way)), lvl = App.prefs.carLevel;
+  for (const wy of ways) {
+    const c = wy._cls; if (c == null || c < 0 || !wy.geometry) { if (c === -1 && App.ratings[wy.id] === "no") L.polyline(wy.geometry.map(p => [p.lat, p.lon]), { color: "#666", weight: 3, dashArray: "2 6" }).on("click", e => ratePopup(wy, e.latlng)).addTo(layerCar); continue; }
+    const reach = ok.has(wy.id);
+    L.polyline(wy.geometry.map(p => [p.lat, p.lon]), { color: ROAD_COL[c], weight: reach ? 4 : 3, opacity: reach ? .85 : .5, dashArray: reach ? null : "5 7" })
+      .on("click", e => { L.DomEvent.stop(e); ratePopup(wy, e.latlng); }).addTo(layerCar);
+  }
+}
+function ratePopup(wy, ll) {
+  const t = wy.tags || {}, c = roadClass(t), r = App.ratings[wy.id];
+  const div = document.createElement("div"); div.className = "pop";
+  const osm = [t.tracktype ? "tipo " + t.tracktype.replace("grade", "grado ") : "", t.surface ? "firme " + t.surface : "", t.smoothness ? "estado " + t.smoothness : ""].filter(Boolean).join(", ");
+  div.innerHTML = "<b>" + esc(t.name || (t.highway === "track" ? "Pista" : "Camino")) + "</b><div>" + (c >= 0 ? ROAD_CLASS[c] : "No apto o prohibido para coches") + " según OpenStreetMap" + (osm ? " (" + esc(osm) + ")" : " (sin datos de estado)") + "</div><div>Tu valoración: <b>" + ({ ok: "bien", limite: "al límite", no: "no pasa" }[r] || "ninguna") + '</b></div><div class="acts"></div>';
+  const acts = div.querySelector(".acts");
+  const set = v => { if (v) App.ratings[wy.id] = v; else delete App.ratings[wy.id]; LS.set("bb.ratings", App.ratings); map.closePopup(); runAnalysis(false); toast("Valoración guardada"); };
+  acts.append(mkBtn("Bien", () => set("ok")), mkBtn("Al límite", () => set("limite")), mkBtn("No pasa", () => set("no")));
+  if (r) acts.append(mkBtn("Quitar", () => set(null)));
+  L.popup({ maxWidth: 300 }).setLatLng(ll).setContent(div).openOn(map);
+}
+// Valoración que diste el 25-10-2026: el camino de los hornos de yeso (Súria), hasta 41,83062, 1,77162, «al límite» para tu coche
+function seedRatings(ways) {
+  if (LS.get("bb.seed1", false)) return;
+  const P = { lat: 41.8306221, lon: 1.7716212 }; let n = 0;
+  for (const w of ways) {
+    const c = roadClass(w.tags || {}); if (c < 1 || !w.geometry || App.ratings[w.id]) continue;
+    const named = /guix|forns|hornos/i.test((w.tags && w.tags.name) || "");
+    const near = w.geometry.some(g => kmDist(g.lat, g.lon, P.lat, P.lon) < .06);
+    if (named || near) { App.ratings[w.id] = "limite"; n++; }
+  }
+  if (n) { LS.set("bb.ratings", App.ratings); LS.set("bb.seed1", true); toast("He marcado como «al límite» el camino de los hornos de yeso. Tócalo en el mapa para cambiarlo.", 6000); }
 }
 function spotIcon(n, level) { return L.divIcon({ className: "", html: '<div class="spot-ico" style="background:' + LV_COL[level] + '">' + n + "</div>", iconSize: [26, 26], iconAnchor: [13, 13] }); }
 const parkIcon = L.divIcon({ className: "", html: '<div class="park-ico">P</div>', iconSize: [22, 22], iconAnchor: [11, 11] });
@@ -235,13 +271,15 @@ function spotLine(s) {
   const d = dirIdx(s.aspect), bits = [];
   if (App.me) bits.push("a " + fmtDist(kmDist(App.me.lat, App.me.lon, s.lat, s.lon) * 1000) + " de ti");
   if (s.walk != null) bits.push(fmtDist(s.walk) + " andando desde el coche");
+  if (s.park) bits.push(s.park.dirt > 30 ? "en coche, " + fmtDist(s.park.dirt) + " de tierra desde el asfalto" : "aparcas junto al asfalto");
   bits.push((s.slope < 6 ? "llano" : s.slope < 12 ? "suave" : "inclinado") + " (" + fmt(s.slope) + "°)" + (s.slope >= 4 ? ", mira al " + DIRL[d] : ""));
   bits.push(fmtDist(s.dPath) + " del camino o sendero más cercano");
   return bits.join(" · ");
 }
 function renderSpotList() {
   const ol = $("#spots"); ol.innerHTML = ""; const A = App.analysis;
-  if (!A || !A.spots.length) { ol.innerHTML = '<li class="hint">Todavía no hay puntos. Acerca el mapa a una zona y pulsa el botón.</li>'; return; }
+  if (!A) { ol.innerHTML = '<li class="hint">Todavía no hay puntos. Acerca el mapa a una zona y pulsa el botón.</li>'; return; }
+  if (!A.spots.length) { ol.innerHTML = '<li class="hint">Con tus ajustes de coche y de distancia andando no llegas a ninguna zona buena aquí. Prueba a aceptar más camino de tierra, a andar más o a mover el mapa.</li>'; return; }
   if (A.sp !== App.prefs.sp) ol.insertAdjacentHTML("beforeend", '<li class="hint">Estos puntos son de otra especie. Vuelve a buscar.</li>');
   A.spots.forEach((s, i) => {
     const li = document.createElement("li"); li.className = "spot";
@@ -281,7 +319,7 @@ map.on("click", e => {
 async function goByCar(lat, lon) {
   // camino más cercano con coche: de la última búsqueda, o del enrutador OSRM
   let park = null;
-  if (App.ways) { const segs = App.ways.ways.filter(w => isDrivable(w.tags || {})).map(w => w.geometry); if (segs.length) { const p = nearestOnSegmentsApp(lat, lon, segs); if (p && p.dist < 2000) park = p; } }
+  if (App.net && App.ways) { const p = nearestParking(lat, lon, App.net); if (p && p.dist < 2000) park = p; }
   if (!park) {
     try { const r = await fetchJSON("https://router.project-osrm.org/nearest/v1/driving/" + lon.toFixed(5) + "," + lat.toFixed(5), 12000); const w = r.waypoints && r.waypoints[0]; if (w) park = { lat: w.location[1], lon: w.location[0], dist: w.distance }; } catch (e) { }
   }
@@ -575,7 +613,8 @@ const SL = {
   pathMin: v => v == 0 ? "da igual" : "mejor a más de " + v + " m",
   walkMax: v => fmtDist(v), shade: v => fmt(v * 100) + " %", hollow: v => fmt(v * 100) + " %",
   minLevel: v => ["", "25 % mejor", "10 % mejor", "3 % mejor"][v], opacity: v => fmt(v * 100) + " %",
-  maxDrive: v => v + " min"
+  maxDrive: v => v + " min",
+  carLevel: v => CAR_LEVELS[v], dirtMax: v => v == 0 ? "nada de tierra" : fmtDist(v)
 };
 const HEAVY = new Set(["flat", "interior", "shade", "hollow"]);
 let rcT = null;
@@ -586,6 +625,7 @@ function bindPrefs() {
       App.prefs[k] = +el.value; $("#" + k + "V").textContent = SL[k](+el.value); LS.set("bb.prefs", App.prefs);
       if (k === "opacity") { if (overlay) overlay.setOpacity(App.prefs.opacity); return; }
       if (k === "maxDrive") { renderPlan(); return; }
+      if (k === "carLevel" || k === "dirtMax") { clearTimeout(rcT); rcT = setTimeout(() => { if (App.ways) runAnalysis(false); }, 300); return; }
       clearTimeout(rcT);
       rcT = setTimeout(() => { if (HEAVY.has(k)) recompute(); else if (k === "minLevel") renderOverlay(); else if (App.ways) runAnalysis(false); }, 300);
     };
