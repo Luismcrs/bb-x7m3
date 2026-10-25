@@ -20,11 +20,14 @@ const STATIONS = {
   D2: { n: "Vacarisses", lat: 41.59251, lon: 1.91499, alt: 343 }
 };
 
+/* cov: afinidad con cada tipo de bosque del mapa de cubiertas del ICGC (pinar denso, pinar claro, frondosas o esclerófilas densas,
+   bosque claro o de ribera, matorral). lc: peso de cada clase de 10 m al validar un punto (1 pinar denso, 2 pinar claro,
+   3 frondosas densas, 4 bosque claro). aff: afinidad con cada especie de pino de la zona (afina dentro del pinar). */
 const SPECIES = {
-  rovello:  { n: "Rovelló",       lat: "Lactarius sanguifluus", aff: { pb: 1, pn: .9, ps: .8, al: .1, ro: .1 },  tmin: [5, 14], tmax: [13, 23], season: ["09-15", "10-10", "11-20", "12-20"], rainMin: 15, rainFull: 70, asp: 0,   hollow: .5 },
-  llenega:  { n: "Llenega negra", lat: "Hygrophorus latitatus", aff: { pb: .8, pn: 1, ps: .9, al: .2, ro: .2 },  tmin: [2, 12], tmax: [10, 20], season: ["10-01", "10-25", "12-10", "01-15"], rainMin: 15, rainFull: 70, asp: .05, hollow: .6 },
-  fredolic: { n: "Fredolic",      lat: "Tricholoma terreum",    aff: { pb: .7, pn: 1, ps: 1, al: .4, ro: .5 },  tmin: [2, 11], tmax: [9, 19],  season: ["10-10", "11-01", "12-15", "01-31"], rainMin: 15, rainFull: 65, asp: 0,   hollow: .5 },
-  camagroc: { n: "Camagroc",      lat: "Craterellus lutescens", aff: { pb: .55, pn: .8, ps: 1, al: .65, ro: .6 }, tmin: [3, 12], tmax: [9, 20],  season: ["10-05", "10-30", "01-10", "02-15"], rainMin: 25, rainFull: 90, asp: .15, hollow: 1, win: [0, 8, 12, 22, 30] }
+  rovello:  { n: "Rovelló",       lat: "Lactarius sanguifluus", aff: { pb: 1, pn: .9, ps: .8, al: .1, ro: .1 },  cov: { dp: 1, sp: .55, db: .12, sb: .1, sc: .12 },  lc: [0, 1, .5, 0, 0],   tmin: [5, 14], tmax: [13, 23], season: ["09-15", "10-10", "11-20", "12-20"], rainMin: 15, rainFull: 70, asp: 0,   hollow: .5 },
+  llenega:  { n: "Llenega negra", lat: "Hygrophorus latitatus", aff: { pb: .8, pn: 1, ps: .9, al: .2, ro: .2 },  cov: { dp: 1, sp: .5, db: .25, sb: .15, sc: .1 },   lc: [0, 1, .5, .2, 0],  tmin: [2, 12], tmax: [10, 20], season: ["10-01", "10-25", "12-10", "01-15"], rainMin: 15, rainFull: 70, asp: .05, hollow: .6 },
+  fredolic: { n: "Fredolic",      lat: "Tricholoma terreum",    aff: { pb: .7, pn: 1, ps: 1, al: .4, ro: .5 },  cov: { dp: 1, sp: .6, db: .5, sb: .35, sc: .2 },    lc: [0, 1, .5, .7, .4], tmin: [2, 11], tmax: [9, 19],  season: ["10-10", "11-01", "12-15", "01-31"], rainMin: 15, rainFull: 65, asp: 0,   hollow: .5 },
+  camagroc: { n: "Camagroc",      lat: "Craterellus lutescens", aff: { pb: .55, pn: .8, ps: 1, al: .65, ro: .6 }, cov: { dp: .85, sp: .4, db: .85, sb: .45, sc: .15 }, lc: [0, 1, .5, 1, .5], tmin: [3, 12], tmax: [9, 20],  season: ["10-05", "10-30", "01-10", "02-15"], rainMin: 25, rainFull: 90, asp: .15, hollow: 1, win: [0, 8, 12, 22, 30] }
 };
 
 const DEFAULT_PREFS = { sp: "rovello", flat: 0.7, interior: 90, shade: 1, hollow: 1, pathMin: 60, walkMax: 600, minLevel: 1, opacity: 0.7, kids: false, maxDrive: 45, carLevel: 2, dirtMax: 2000, climbMax: 100, avoidCrowd: false, minWalk: 300 };
@@ -154,8 +157,12 @@ function meteoFactors(s, m, alt, date) {
 /* ---------- Rejilla ---------- */
 class Grid {
   // Se guarda en formato compacto (7 bytes por celda) para no agotar la memoria del móvil.
-  constructor(meta, terrain, forest, elev) {
+  // cover1/cover2: fracciones de cada tipo de cubierta del ICGC (opcionales; sin ellas se usa el bosque total)
+  constructor(meta, terrain, forest, elev, cover1, cover2) {
     Object.assign(this, meta); const n = meta.W * meta.H; this.n = n;
+    this.hasCover = !!(cover1 && cover2);
+    if (this.hasCover) { this.cdp = new Uint8Array(n); this.csp = new Uint8Array(n); this.cdb = new Uint8Array(n); this.csb = new Uint8Array(n); this.csc = new Uint8Array(n);
+      for (let i = 0, p = 0; i < n; i++, p += 4) { this.cdp[i] = cover1[p]; this.csp[i] = cover1[p + 1]; this.cdb[i] = cover1[p + 2]; this.csb[i] = cover2[p]; this.csc[i] = cover2[p + 1]; } }
     this.sl4 = new Uint8Array(n); this.asp = new Uint8Array(n); this.tpi8 = new Int8Array(n);
     this.tr8 = new Uint8Array(n); this.ed4 = new Uint8Array(n); this.flags = new Uint8Array(n); this.zz = new Uint16Array(n);
     for (let i = 0, p = 0; i < n; i++, p += 4) {
@@ -186,12 +193,20 @@ function computeScores(grid, summ, prefs, date, step = 1) {
     const la = grid.latOf(Math.min(H - 1, bi + BS / 2)), lo = grid.lonOf(Math.min(W - 1, bj + BS / 2));
     const m = meteoAt(la, lo, summ, Rst); if (!m) continue;
     const mix = forestMix(la, lo, grid.zones); let Hf = 0; for (const t in mix) Hf += mix[t] * (s.aff[t] || 0);
+    // dentro del pinar, la especie de pino de la zona afina un poco (pino carrasco, laricio, silvestre)
+    const pw = mix.pb + mix.pn + mix.ps, pMod = pw > 0 ? (mix.pb * s.aff.pb + mix.pn * s.aff.pn + mix.ps * s.aff.ps) / pw : 1;
+    const cv = s.cov, cdp = cv.dp * pMod / 255, csp = cv.sp * pMod / 255, cdb = cv.db / 255, csb = cv.sb / 255, csc = cv.sc / 255;
     const S = seasonF(s, date), R = clamp(m.R, .05, 1);
     for (let i = bi; i < Math.min(H, bi + BS); i++) for (let j = bj; j < Math.min(W, bj + BS); j++) {
       if (step > 1 && (i % step || j % step)) continue;
       const k = i * W + j, fl = grid.flags[k]; if (!(fl & 1)) continue;
       if (fl & 2) { out[k] = 0; continue; }
-      const Ff = clamp((grid.tr8[k] / 255 - .35) / .45, 0, 1); if (Ff <= 0) { out[k] = 0; continue; }
+      // Bosque adecuado de verdad en la celda (mapa de cubiertas del ICGC, 1 m): un campo, un matorral o una franja de
+      // árboles entre cultivos no puntúan. Pinar denso al 85 % o más = 1; por debajo del 25 % de bosque adecuado = 0.
+      let Ff;
+      if (grid.hasCover) { const Hc = grid.cdp[k] * cdp + grid.csp[k] * csp + grid.cdb[k] * cdb + grid.csb[k] * csb + grid.csc[k] * csc; Ff = clamp((Hc - .25) / .6, 0, 1); }
+      else Ff = clamp((grid.tr8[k] / 255 - .35) / .45, 0, 1) * Hf;
+      if (Ff <= 0) { out[k] = 0; continue; }
       const z = grid.zz[k], tmin = m.t0min - .006 * z, tmax = m.t0max - .006 * z;
       let D = 1, a;
       if (m.rain7 < 3) D = tmax > 24 ? .7 : tmax > 20 ? .82 : .92;
@@ -204,7 +219,7 @@ function computeScores(grid, summ, prefs, date, step = 1) {
       const I = inter > 0 ? .5 + .5 * clamp(grid.ed4[k] * 4 / inter, 0, 1) : 1;
       const A = 1 + a * shade * grid.cosAsp[grid.asp[k]] * Math.min(1, sl / 10);
       const Wh = 1 + clamp(-grid.tpi8[k] / 20, -.3, .3) * hol;
-      out[k] = clamp(100 * Hf * S * R * D * T * Ff * I * Sl * A * Wh / 1.15, 0, 100);
+      out[k] = clamp(100 * S * R * D * T * Ff * I * Sl * A * Wh / 1.15, 0, 100);
     }
   }
   return out;
@@ -351,61 +366,204 @@ function climbProfile(grid, a, b) {
   for (let t = 0; t <= n; t++) { const k = grid.idx(a.lat + (b.lat - a.lat) * t / n, a.lon + (b.lon - a.lon) * t / n); if (k < 0) continue; const z = grid.z(k); if (prev != null) { if (z > prev) up += z - prev; else down += prev - z; } prev = z; }
   return { up: Math.round(up), down: Math.round(down) };
 }
-/* ways: elementos 'way' de Overpass (tags, nodes, geometry). Devuelve los mejores puntos a los que se llega con tu coche. */
-function analyzeWindow(grid, sc, th, bbox, ways, prefs, me) {
-  const i0 = clamp(grid.rowOf(bbox.n), 0, grid.H - 1), i1 = clamp(grid.rowOf(bbox.s), 0, grid.H - 1);
-  const j0 = clamp(grid.colOf(bbox.w), 0, grid.W - 1), j1 = clamp(grid.colOf(bbox.e), 0, grid.W - 1);
-  const w = j1 - j0 + 1, h = i1 - i0 + 1; const dx = Math.abs(grid.dlon) * 111320 * Math.cos(41.78 * Math.PI / 180), dy = Math.abs(grid.dlat) * 111320;
-  const allM = new Uint8Array(w * h), carM = new Uint8Array(w * h), pavM = new Uint8Array(w * h), zSrc = new Float32Array(w * h);
-  const mark = (M, la1, lo1, la2, lo2) => { // Bresenham sobre la ventana
-    let y0 = grid.rowOf(la1) - i0, x0 = grid.colOf(lo1) - j0; const y1 = grid.rowOf(la2) - i0, x1 = grid.colOf(lo2) - j0;
-    if ((y0 < -50 && y1 < -50) || (x0 < -50 && x1 < -50) || (y0 > h + 50 && y1 > h + 50) || (x0 > w + 50 && x1 > w + 50)) return;
-    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1; let ex = Math.abs(x1 - x0), ey = -Math.abs(y1 - y0), err = ex + ey, guard = 0;
-    while (guard++ < 20000) { if (x0 >= 0 && y0 >= 0 && x0 < w && y0 < h) M[y0 * w + x0] = 1; if (x0 === x1 && y0 === y1) break; const e2 = 2 * err; if (e2 >= ey) { err += ey; x0 += sx; } if (e2 <= ex) { err += ex; y0 += sy; } }
-  };
-  for (const wy of ways) { const g = wy.geometry; if (!g || g.length < 2) continue; for (let i = 1; i < g.length; i++) mark(allM, g[i - 1].lat, g[i - 1].lon, g[i].lat, g[i].lon); }
-  const net = roadNetwork(ways, prefs);
-  for (const sg of net.reach) { const A = net.nodes.get(sg.a), B = net.nodes.get(sg.b); mark(carM, A.lat, A.lon, B.lat, B.lon); if (sg.c === 0) mark(pavM, A.lat, A.lon, B.lat, B.lon); }
-  for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) { const q = i * w + j; if (carM[q]) zSrc[q] = grid.zz[(i0 + i) * grid.W + j0 + j]; }
-  const dPath = chamfer(allM, w, h, dx, dy), CV = chamferV(carM, zSrc, w, h, dx, dy), dCar = CV.d, zCar = CV.v, dPav = chamfer(pavM, w, h, dx, dy);
-  // Afluencia probable (0–1): cerca del asfalto, de pueblos/urbanizaciones o con muchos caminos alrededor
-  const bm = new Uint8Array(w * h); for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) bm[i * w + j] = (grid.flags[(i0 + i) * grid.W + j0 + j] & 2) ? 1 : 0;
-  const builtNear = boxMean(bm, w, h, 25), pathDens = boxMean(allM, w, h, 8);
-  const crowd = new Float32Array(w * h);
-  for (let q = 0; q < w * h; q++) crowd[q] = clamp(.45 * clamp(1 - dPav[q] / 600, 0, 1) + .35 * clamp(pathDens[q] / .12, 0, 1) + .2 * clamp(builtNear[q] / .05, 0, 1) + .25 * clamp(1 - dCar[q] / 250, 0, 1), 0, 1);
-  const climbMax = prefs.kids ? Math.min(prefs.climbMax ?? 100, 40) : (prefs.climbMax ?? 100);
-  const minWalk = prefs.avoidCrowd ? (prefs.minWalk ?? 300) : 0, pathMin = prefs.avoidCrowd ? Math.max(prefs.pathMin, 120) : prefs.pathMin;
-  const adj = new Float32Array(w * h);
-  for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) {
-    const k = (i0 + i) * grid.W + (j0 + j), q = i * w + j, v = sc[k]; if (!(v > 0)) continue;
-    const walk = dCar[q] * 1.3; if (walk > prefs.walkMax || walk < minWalk) continue;
-    if (Math.abs(grid.zz[k] - zCar[q]) > climbMax) continue;
-    const pf = pathMin > 0 ? .6 + .4 * clamp(dPath[q] / pathMin, 0, 1) : 1;
-    adj[q] = v * pf * (prefs.avoidCrowd ? 1 - .5 * crowd[q] : 1);
-  }
-  const sm = new Float32Array(w * h);
-  for (let i = 1; i < h - 1; i++) for (let j = 1; j < w - 1; j++) { let s = 0, c = 0; for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const v = adj[(i + a) * w + j + b]; if (v > 0) { s += v; c++; } } sm[i * w + j] = c >= 6 ? s / 9 : 0; }
-  const cand = []; for (let q = 0; q < w * h; q++) if (sm[q] > 0) cand.push(q);
-  cand.sort((a, b) => sm[b] - sm[a]);
-  const picks = [], sep = 300;
-  let tried = 0;
-  for (const q of cand) {
-    const i = Math.floor(q / w), j = q % w; if (!picks.every(p => Math.hypot((p.i - i) * dy, (p.j - j) * dx) >= sep)) continue;
-    if (++tried > 250) break;
-    // desnivel real en línea recta desde donde aparcas (sube y baja), no solo la diferencia entre los dos extremos
-    const lat = grid.latOf(i0 + i), lon = grid.lonOf(j0 + j), park = nearestParking(lat, lon, net), prof = park ? climbProfile(grid, park, { lat, lon }) : null;
-    if (prof && Math.max(prof.up, prof.down) > climbMax) continue;
-    picks.push({ q, i, j, park, prof }); if (picks.length >= 15) break;
-  }
+/* ---------- A pie: rejilla de 10 m con el mapa de cubiertas del ICGC ----------
+   Clases de 10 m: 0 fuera · 1 pinar denso · 2 pinar claro · 3 frondosas o esclerófilas densas · 4 bosque claro o de ribera ·
+   5 matorral · 6 abierto, cultivo o prado · 7 urbano o vial · 8 agua · 9 vía de tren, industria o minas · 10 roca.
+   Coste relativo de andar campo a través por cada clase (Infinity = no se pasa). */
+const WALK_COST = [1.3, 1, 1, 1.2, 1, 1.7, 1, 1.1, Infinity, Infinity, 3];
+const LC_CLASS_NAMES = ["fuera del mapa", "pinar denso", "pinar claro", "bosque denso de frondosas", "bosque claro o de ribera", "matorral", "campo, cultivo o prado", "urbano o carretera", "agua", "vía de tren, industria o minas", "roca"];
+// Ventana de 10 m: la caja de búsqueda más un margen para poder aparcar fuera de ella
+function walkWindow(lcm, bbox, prefs) {
+  const mLat = Math.min(prefs.walkMax ?? 600, 700) / 111320, mLon = mLat / Math.cos(41.78 * Math.PI / 180);
+  const i0 = Math.max(0, Math.floor((bbox.n + mLat - lcm.lat0) / lcm.dlat)), i1 = Math.min(lcm.H - 1, Math.floor((bbox.s - mLat - lcm.lat0) / lcm.dlat));
+  const j0 = Math.max(0, Math.floor((bbox.w - mLon - lcm.lon0) / lcm.dlon)), j1 = Math.min(lcm.W - 1, Math.floor((bbox.e + mLon - lcm.lon0) / lcm.dlon));
+  return { i0, j0, w: j1 - j0 + 1, h: i1 - i0 + 1 };
+}
+const RAIL = /^(rail|narrow_gauge|light_rail|funicular|monorail|preserved|subway|tram)$/;
+const yes = v => v != null && v !== "no";
+// Barreras que no se cruzan andando salvo por un paso: tren, autovía, río o canal, valla, cortado
+function barrierKind(t) {
+  if (t.railway && RAIL.test(t.railway) && !yes(t.bridge) && !yes(t.tunnel)) return "tren";
+  if (/^(motorway|trunk)(_link)?$/.test(t.highway || "") && !yes(t.bridge) && !yes(t.tunnel)) return "autovía";
+  if (/^(river|canal)$/.test(t.waterway || "") && !yes(t.tunnel) && !yes(t.bridge)) return "río";
+  if (t.barrier === "fence") return "valla";
+  if (t.natural === "cliff") return "cortado";
+  return null;
+}
+const WALKABLE = /^(track|path|footway|bridleway|steps|pedestrian|cycleway|unclassified|residential|living_street|service|tertiary|secondary|road|primary)(_link)?$/;
+function walkableKind(t) {
+  const h = t.highway || ""; if (!WALKABLE.test(h)) return 0;
+  if (t.foot === "no" || (t.access === "no" && !/^(yes|designated|permissive)$/.test(t.foot || ""))) return 0;
+  return /^primary/.test(h) ? 2 : 1; // 2: carretera principal (se puede cruzar, pero mejor no ir por ella)
+}
+// Rejilla de prioridad (montículo binario con arrays tipados)
+function Heap(cap) {
+  let k = new Float64Array(cap), v = new Int32Array(cap), n = 0;
   return {
-    window: { i0, j0, w, h }, net,
-    spots: picks.map(p => {
-      const k = (i0 + p.i) * grid.W + (j0 + p.j), lat = grid.latOf(i0 + p.i), lon = grid.lonOf(j0 + p.j);
-      const park = p.park, prof = p.prof;
-      return { lat, lon, score: sc[k], adj: sm[p.q], level: absLevel(sc[k]), slope: grid.slope(k), aspect: grid.aspect(k), z: grid.z(k), edge: grid.edge(k), tree: grid.tree(k),
-        dPath: Math.round(dPath[p.q]), walk: park ? Math.round(park.dist * 1.3) : null, park, prof, crowd: crowd[p.q], fromMe: me ? kmDist(me.lat, me.lon, lat, lon) : null };
-    })
+    get size() { return n; },
+    push(key, val) {
+      if (n === k.length) { const k2 = new Float64Array(n * 2), v2 = new Int32Array(n * 2); k2.set(k); v2.set(v); k = k2; v = v2; }
+      let i = n++; while (i > 0) { const p = (i - 1) >> 1; if (k[p] <= key) break; k[i] = k[p]; v[i] = v[p]; i = p; } k[i] = key; v[i] = val;
+    },
+    pop() { // devuelve el valor; la clave queda en this.key
+      const topV = v[0]; this.key = k[0]; const lk = k[--n], lv = v[n]; let i = 0;
+      for (;;) { let c = 2 * i + 1; if (c >= n) break; if (c + 1 < n && k[c + 1] < k[c]) c++; if (k[c] >= lk) break; k[i] = k[c]; v[i] = v[c]; i = c; }
+      k[i] = lk; v[i] = lv; return topV;
+    }
   };
 }
+// Simplifica una polilínea (Douglas-Peucker) en metros locales
+function simplify(pts, tol) {
+  if (pts.length < 3) return pts;
+  const cx = Math.cos(41.78 * Math.PI / 180) * 111320, cy = 110540, keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+  const st = [[0, pts.length - 1]];
+  while (st.length) {
+    const [a, b] = st.pop(); let md = 0, mi = -1;
+    const ax = pts[a][1] * cx, ay = pts[a][0] * cy, bx = pts[b][1] * cx, by = pts[b][0] * cy, vx = bx - ax, vy = by - ay, L = vx * vx + vy * vy;
+    for (let i = a + 1; i < b; i++) { const px = pts[i][1] * cx - ax, py = pts[i][0] * cy - ay, t = L ? clamp((px * vx + py * vy) / L, 0, 1) : 0, d = Math.hypot(px - t * vx, py - t * vy); if (d > md) { md = d; mi = i; } }
+    if (md > tol) { keep[mi] = 1; st.push([a, mi], [mi, b]); }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+/* Mejores puntos a los que se llega con tu coche y luego andando de verdad.
+   ways: elementos 'way' de Overpass (caminos, y además vías de tren, ríos, vallas y cortados).
+   lc: ventana de 10 m del mapa de cubiertas { cls, i0, j0, w, h, lat0, lon0, dlat, dlon }.
+   1) Con la red de caminos y tu coche, dónde puedes aparcar (roadNetwork).
+   2) Ruta a pie más corta en esfuerzo desde cualquier sitio donde aparcar (Dijkstra sobre la rejilla de 10 m):
+      no cruza vías de tren, autovías, ríos, canales, vallas, cortados, agua ni zonas industriales, salvo por un camino que
+      las cruce (puente, túnel o paso a nivel); evita pendientes fuertes y cuenta la subida.
+   3) El punto tiene que estar en bosque adecuado de verdad: la celda y al menos el 60 % de lo que la rodea (~60 m). */
+function analyzeWindow(grid, sc, th, bbox, ways, prefs, me, lc) {
+  const s = SPECIES[prefs.sp], W = lc.w, H = lc.h, N = W * H, cls = lc.cls;
+  const latOf = i => lc.lat0 + (lc.i0 + i + .5) * lc.dlat, lonOf = j => lc.lon0 + (lc.j0 + j + .5) * lc.dlon;
+  const rowF = la => (la - lc.lat0) / lc.dlat - lc.i0, colF = lo => (lo - lc.lon0) / lc.dlon - lc.j0;
+  const cosL = Math.cos(41.78 * Math.PI / 180), dx = Math.abs(lc.dlon) * 111320 * cosL, dy = Math.abs(lc.dlat) * 111320, dd = Math.hypot(dx, dy);
+  const gr = new Int32Array(H), gc = new Int32Array(W);
+  for (let i = 0; i < H; i++) gr[i] = clamp(grid.rowOf(latOf(i)), 0, grid.H - 1);
+  for (let j = 0; j < W; j++) gc[j] = clamp(grid.colOf(lonOf(j)), 0, grid.W - 1);
+  const k30 = q => { const i = (q / W) | 0; return gr[i] * grid.W + gc[q - i * W]; };
+  // Dibujo de líneas en la rejilla (paso a paso en 4 direcciones, sin huecos en diagonal); thick = pincel 3×3
+  const put = (M, v, y, x, thick) => {
+    if (!thick) { if (x >= 0 && y >= 0 && x < W && y < H) M[y * W + x] = v; return; }
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const yy = y + a, xx = x + b; if (xx >= 0 && yy >= 0 && xx < W && yy < H) M[yy * W + xx] = v; }
+  };
+  const seg = (M, v, la1, lo1, la2, lo2, thick) => {
+    let y = Math.floor(rowF(la1)), x = Math.floor(colF(lo1)); const y1 = Math.floor(rowF(la2)), x1 = Math.floor(colF(lo2));
+    if ((y < -2 && y1 < -2) || (x < -2 && x1 < -2) || (y > H + 1 && y1 > H + 1) || (x > W + 1 && x1 > W + 1)) return;
+    const nx = Math.abs(x1 - x), ny = Math.abs(y1 - y), sx = x < x1 ? 1 : -1, sy = y < y1 ? 1 : -1;
+    put(M, v, y, x, thick);
+    for (let ix = 0, iy = 0; (ix < nx || iy < ny) && ix + iy < 60000;) { if ((.5 + ix) / nx < (.5 + iy) / ny) { x += sx; ix++; } else { y += sy; iy++; } put(M, v, y, x, thick); }
+  };
+  const drawWay = (M, v, g, thick) => { for (let i = 1; i < g.length; i++) seg(M, v, g[i - 1].lat, g[i - 1].lon, g[i].lat, g[i].lon, thick); };
 
-if (typeof module !== "undefined") module.exports = { climbProfile, roadClass, roadNetwork, nearestParking, effClass, ROAD_CLASS, CAR_LEVELS, STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };
+  // 1) Coche
+  const net = roadNetwork(ways, prefs);
+  const carSeg = new Int32Array(N).fill(-1), pavM = new Uint8Array(N), byId = new Map(ways.map(x => [x.id, x]));
+  net.reach.forEach((sg, n) => {
+    const A = net.nodes.get(sg.a), B = net.nodes.get(sg.b), w = byId.get(sg.way), h = (w && w.tags && w.tags.highway) || "";
+    if (sg.c === 0) seg(pavM, 1, A.lat, A.lon, B.lat, B.lon, false);
+    if (/^(motorway|trunk)/.test(h)) return; // en una autovía no se aparca
+    seg(carSeg, n, A.lat, A.lon, B.lat, B.lon, false);
+  });
+  // 2) Caminos (para andar y para apartarse de lo pisado) y barreras
+  const wayM = new Uint8Array(N), walkM = new Uint8Array(N), bridgeM = new Uint8Array(N), barM = new Uint8Array(N), wallM = new Uint8Array(N);
+  const barNodes = new Map(), barriers = [];
+  for (const wy of ways) {
+    const t = wy.tags || {}, g = wy.geometry; if (!g || g.length < 2) continue;
+    const bk = barrierKind(t);
+    if (bk) { drawWay(barM, 1, g, true); barriers.push({ kind: bk, id: wy.id }); if (bk === "tren" || bk === "autovía" || bk === "río") (wy.nodes || []).forEach(n => barNodes.set(n, 1)); continue; }
+    if (t.barrier === "wall") { drawWay(wallM, 1, g, false); continue; }
+    if (!t.highway) continue;
+    drawWay(wayM, 1, g, false);
+    const wk = walkableKind(t); if (!wk) continue;
+    drawWay(yes(t.bridge) || yes(t.tunnel) || t.ford === "yes" ? bridgeM : walkM, wk, g, false);
+  }
+  // pasos a nivel y vados: el camino comparte un nodo con la vía o el río → se abre la barrera en ese punto
+  for (const wy of ways) {
+    const t = wy.tags || {}; if (!t.highway || !walkableKind(t) || !wy.nodes || !wy.geometry) continue;
+    wy.nodes.forEach((n, i) => {
+      if (!barNodes.has(n)) return; const p = wy.geometry[i], y = Math.floor(rowF(p.lat)), x = Math.floor(colF(p.lon));
+      for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) { const yy = y + a, xx = x + b; if (xx >= 0 && yy >= 0 && xx < W && yy < H && walkM[yy * W + xx]) bridgeM[yy * W + xx] = walkM[yy * W + xx]; }
+    });
+  }
+  // Coste de cada celda
+  const kids = !!prefs.kids, maxSl = kids ? 28 : 38, cost = new Float32Array(N), z = new Float32Array(N);
+  for (let q = 0; q < N; q++) {
+    const k = k30(q), sl = grid.sl4[k] / 4; let c;
+    if (bridgeM[q]) c = bridgeM[q] === 2 ? 2.5 : .8;
+    else if (barM[q]) c = Infinity;
+    else if (walkM[q]) c = walkM[q] === 2 ? 2.5 : .8;
+    else { const cl = cls[q]; c = WALK_COST[cl]; if (c < Infinity) { if (sl > maxSl || (cl === 10 && sl > 25)) c = Infinity; else c *= 1 + (sl / 22) * (sl / 22); } }
+    if (wallM[q] && c < Infinity) c += 3;
+    cost[q] = c;
+  }
+  // altitud a 10 m (interpolación bilineal del modelo de 30 m)
+  for (let i = 0; i < H; i++) {
+    const fy = (latOf(i) - grid.lat0) / grid.dlat - .5, y0 = clamp(Math.floor(fy), 0, grid.H - 2), ty = clamp(fy - y0, 0, 1);
+    for (let j = 0; j < W; j++) {
+      const fx = (lonOf(j) - grid.lon0) / grid.dlon - .5, x0 = clamp(Math.floor(fx), 0, grid.W - 2), tx = clamp(fx - x0, 0, 1), k = y0 * grid.W + x0;
+      z[i * W + j] = (grid.zz[k] * (1 - tx) + grid.zz[k + 1] * tx) * (1 - ty) + (grid.zz[k + grid.W] * (1 - tx) + grid.zz[k + grid.W + 1] * tx) * ty;
+    }
+  }
+  // 3) Ruta a pie de mínimo esfuerzo desde cualquier sitio donde aparcar
+  const walkMax = prefs.walkMax ?? 600, upW = kids ? 10 : 7, capCost = walkMax * 3 + 600;
+  const dist = new Float64Array(N).fill(Infinity), real = new Float32Array(N), up = new Float32Array(N), down = new Float32Array(N), par = new Int32Array(N).fill(-1);
+  const heap = Heap(1 << 16);
+  for (let q = 0; q < N; q++) if (carSeg[q] >= 0 && cost[q] < Infinity) { dist[q] = 0; heap.push(0, q); }
+  const NB = [[0, 1, dx], [0, -1, dx], [1, 0, dy], [-1, 0, dy], [1, 1, dd], [1, -1, dd], [-1, 1, dd], [-1, -1, dd]];
+  while (heap.size) {
+    const q = heap.pop(), d = heap.key; if (d > dist[q]) continue; if (d > capCost) break;
+    if (real[q] > walkMax) continue;
+    const i = (q / W) | 0, j = q - i * W, cq = cost[q];
+    for (const [di, dj, L] of NB) {
+      const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= H || jj >= W) continue;
+      const nq = ii * W + jj, c2 = cost[nq]; if (c2 === Infinity) continue;
+      if (di && dj && (cost[i * W + jj] === Infinity || cost[ii * W + j] === Infinity)) continue; // sin colarse en diagonal
+      const dz = z[nq] - z[q], nd = d + L * (cq + c2) / 2 + (dz > 0 ? upW * dz : -2 * dz);
+      if (nd < dist[nq]) { dist[nq] = nd; par[nq] = q; real[nq] = real[q] + L; up[nq] = up[q] + Math.max(0, dz); down[nq] = down[q] + Math.max(0, -dz); heap.push(nd, nq); }
+    }
+  }
+  // 4) Bosque adecuado alrededor (~60 m), lejanía de caminos y afluencia probable
+  const wsrc = new Float32Array(N), bm = new Uint8Array(N);
+  for (let q = 0; q < N; q++) { wsrc[q] = s.lc[cls[q]] || 0; bm[q] = (grid.flags[k30(q)] & 2) ? 1 : 0; }
+  const S10 = boxMean(wsrc, W, H, 3), dPath = chamfer(wayM, W, H, dx, dy), dPav = chamfer(pavM, W, H, dx, dy);
+  const builtNear = boxMean(bm, W, H, 75), pathDens = boxMean(wayM, W, H, 24);
+  const crowdAt = q => clamp(.45 * clamp(1 - dPav[q] / 600, 0, 1) + .35 * clamp(pathDens[q] / .04, 0, 1) + .2 * clamp(builtNear[q] / .05, 0, 1) + .25 * clamp(1 - real[q] / 250, 0, 1), 0, 1);
+  const climbMax = kids ? Math.min(prefs.climbMax ?? 100, 40) : (prefs.climbMax ?? 100);
+  const minWalk = prefs.avoidCrowd ? (prefs.minWalk ?? 300) : 0, pathMin = prefs.avoidCrowd ? Math.max(prefs.pathMin, 120) : prefs.pathMin;
+  const bi0 = Math.max(1, Math.ceil(rowF(bbox.n))), bi1 = Math.min(H - 2, Math.floor(rowF(bbox.s))), bj0 = Math.max(1, Math.ceil(colF(bbox.w))), bj1 = Math.min(W - 2, Math.floor(colF(bbox.e)));
+  const sc3 = k => { let sum = 0, c = 0; for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const u = sc[k + a * grid.W + b]; if (u > 0) { sum += u; c++; } } return c >= 6 ? sum / 9 : 0; };
+  const cand = [];
+  for (let i = bi0; i <= bi1; i += 2) for (let j = bj0; j <= bj1; j += 2) {
+    const q = i * W + j; if (dist[q] === Infinity || real[q] > walkMax || real[q] < minWalk) continue;
+    if (Math.max(up[q], down[q]) > climbMax) continue;
+    if ((s.lc[cls[q]] || 0) < .5 || S10[q] < .6) continue; // en bosque adecuado de verdad, no en un matorral ni en una franja
+    const k = k30(q); if (!(sc[k] > 0)) continue; const v = sc3(k); if (!(v > 0)) continue;
+    const pf = pathMin > 0 ? .6 + .4 * clamp(dPath[q] / pathMin, 0, 1) : 1;
+    cand.push({ q, v: v * pf * (.6 + .4 * S10[q]) * (prefs.avoidCrowd ? 1 - .5 * crowdAt(q) : 1) });
+  }
+  cand.sort((a, b) => b.v - a.v);
+  const picks = [], sep = 300;
+  for (const c of cand) {
+    const i = (c.q / W) | 0, j = c.q - i * W; if (!picks.every(p => Math.hypot((p.i - i) * dy, (p.j - j) * dx) >= sep)) continue;
+    picks.push({ q: c.q, i, j, v: c.v }); if (picks.length >= 15) break;
+  }
+  const spots = picks.map(p => {
+    const q = p.q, k = k30(q), lat = latOf(p.i), lon = lonOf(p.j);
+    const cells = []; let r = q, guard = 0; while (r >= 0 && guard++ < 100000) { cells.push(r); if (par[r] < 0) break; r = par[r]; }
+    const q0 = cells[cells.length - 1], i0 = (q0 / W) | 0, j0 = q0 - i0 * W;
+    const park = nearestParking(latOf(i0), lonOf(j0), net);
+    const pts = cells.reverse().map(c => { const ci = (c / W) | 0; return [latOf(ci), lonOf(c - ci * W)]; });
+    if (park) pts.unshift([park.lat, park.lon]);
+    const route = simplify(pts, 4).map(x => [Math.round(x[0] * 1e6) / 1e6, Math.round(x[1] * 1e6) / 1e6]);
+    if (park) park.dist = Math.hypot((park.lat - latOf(i0)) * 110540, (park.lon - lonOf(j0)) * 111320 * cosL);
+    return { lat, lon, score: sc[k], adj: p.v, level: absLevel(sc[k]), slope: grid.slope(k), aspect: grid.aspect(k), z: Math.round(z[q]), edge: grid.edge(k), tree: grid.tree(k),
+      cover: cls[q], forest: Math.round(S10[q] * 100) / 100, dPath: Math.round(dPath[q]), walk: Math.round(real[q] + (park ? park.dist : 0)), park,
+      prof: { up: Math.round(up[q]), down: Math.round(down[q]) }, route, crowd: crowdAt(q), fromMe: me ? kmDist(me.lat, me.lon, lat, lon) : null };
+  });
+  const out = { window: { i0: lc.i0, j0: lc.j0, w: W, h: H }, net, spots, barriers: barriers.length, reached: cand.length };
+  if (prefs._debug) out.debug = { dist, real, cost, up, down, S10, carSeg, barM, walkM, bridgeM };
+  return out;
+}
+
+if (typeof module !== "undefined") module.exports = { walkWindow, WALK_COST, LC_CLASS_NAMES, barrierKind, walkableKind, simplify, climbProfile, roadClass, roadNetwork, nearestParking, effClass, ROAD_CLASS, CAR_LEVELS, STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };

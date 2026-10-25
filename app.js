@@ -1,6 +1,6 @@
 /* Bolets Bages · app */
 "use strict";
-const VERSION = "1.4 · 25-10-2026";
+const VERSION = "1.5 · 25-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -67,10 +67,33 @@ async function loadPixels(url) {
 async function loadGrid() {
   setStatus("Cargando relieve y bosque…");
   const meta = await fetchJSON("data/meta.json");
-  const [t, f, e, mu, mj] = await Promise.all([...["data/terrain.png", "data/forest.png", "data/elev.png", "data/munis.png"].map(loadPixels), fetchJSON("data/munis.json")]);
-  App.grid = new Grid(meta, t, f, e);
+  const [t, f, e, mu, c1, c2, mj] = await Promise.all([...["data/terrain.png", "data/forest.png", "data/elev.png", "data/munis.png", "data/cover1.png", "data/cover2.png"].map(loadPixels), fetchJSON("data/munis.json")]);
+  App.grid = new Grid(meta, t, f, e, c1, c2);
   App.muniArr = new Uint8Array(App.grid.n); for (let i = 0, p = 0; i < App.grid.n; i++, p += 4) App.muniArr[i] = mu[p];
   App.munis = mj;
+}
+
+/* Mapa de cubiertas del ICGC a 10 m, en 12 trozos que se cargan solo cuando hacen falta */
+const lcTiles = new Map();
+function lcTile(r, c) {
+  const key = r + "_" + c; if (lcTiles.has(key)) return lcTiles.get(key);
+  const m = App.grid.lc10, p = loadPixels("data/lc/" + key + ".png").then(px => { const a = new Uint8Array(m.tileW * m.tileH); for (let i = 0, q = 0; i < a.length; i++, q += 4) a[i] = px[q]; return a; });
+  p.catch(() => lcTiles.delete(key)); lcTiles.set(key, p); return p;
+}
+async function lcWindowFor(box) {
+  const m = App.grid.lc10, w = walkWindow(m, box, App.prefs), cls = new Uint8Array(w.w * w.h);
+  const r0 = Math.floor(w.i0 / m.tileH), r1 = Math.floor((w.i0 + w.h - 1) / m.tileH), c0 = Math.floor(w.j0 / m.tileW), c1 = Math.floor((w.j0 + w.w - 1) / m.tileW);
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+    const a = await lcTile(r, c), ti0 = r * m.tileH, tj0 = c * m.tileW;
+    const ia = Math.max(w.i0, ti0), ib = Math.min(w.i0 + w.h, ti0 + m.tileH), ja = Math.max(w.j0, tj0), jb = Math.min(w.j0 + w.w, tj0 + m.tileW);
+    for (let i = ia; i < ib; i++) cls.set(a.subarray((i - ti0) * m.tileW + ja - tj0, (i - ti0) * m.tileW + jb - tj0), (i - w.i0) * w.w + ja - w.j0);
+  }
+  return Object.assign(w, { cls, lat0: m.lat0, lon0: m.lon0, dlat: m.dlat, dlon: m.dlon });
+}
+async function lcClassAt(lat, lon) {
+  const m = App.grid && App.grid.lc10; if (!m) return null;
+  const i = Math.floor((lat - m.lat0) / m.dlat), j = Math.floor((lon - m.lon0) / m.dlon); if (i < 0 || j < 0 || i >= m.H || j >= m.W) return null;
+  const r = Math.floor(i / m.tileH), c = Math.floor(j / m.tileW), a = await lcTile(r, c); return a[(i - r * m.tileH) * m.tileW + j - c * m.tileW];
 }
 
 /* ---------- Meteo (Meteocat en directo, con copia de seguridad) ---------- */
@@ -171,7 +194,7 @@ const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.k
 async function overpass(q) {
   let err;
   for (const u of OVERPASS) {
-    try { return await fetchJSON(u, 40000, { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" } }); }
+    try { return await fetchJSON(u, 60000, { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" } }); }
     catch (e) { err = e; }
   }
   throw err;
@@ -195,19 +218,29 @@ async function analyze() {
   try {
     const bb = [box.s, box.w, box.n, box.e].map(v => v.toFixed(5)).join(","), M = .02;
     const bx = [box.s - M, box.w - M * 1.3, box.n + M, box.e + M * 1.3].map(v => v.toFixed(5)).join(",");
-    const q = "[out:json][timeout:45];(way[\"highway\"](" + bb + ");way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|road)\"](" + bx + "););out body geom;node[\"place\"~\"^(village|hamlet|isolated_dwelling|farm|locality|neighbourhood|town)$\"][\"name\"](" + bx + ");node[\"natural\"=\"peak\"][\"name\"](" + bx + ");out body;";
+    // caminos de la zona (y un margen para aparcar fuera), carreteras para llegar, y lo que no se cruza andando
+    const W2 = .009, bw = [box.s - W2, box.w - W2 * 1.3, box.n + W2, box.e + W2 * 1.3].map(v => v.toFixed(5)).join(",");
+    const q = "[out:json][timeout:60];(way[\"highway\"](" + bw + ");way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|road)\"](" + bx + ");" +
+      "way[\"railway\"~\"^(rail|narrow_gauge|light_rail|funicular|monorail|preserved|subway|tram)$\"](" + bw + ");way[\"waterway\"~\"^(river|canal)$\"](" + bw + ");way[\"barrier\"~\"^(fence|wall)$\"](" + bw + ");way[\"natural\"=\"cliff\"](" + bw + "););out body geom;" +
+      "node[\"place\"~\"^(village|hamlet|isolated_dwelling|farm|locality|neighbourhood|town)$\"][\"name\"](" + bx + ");node[\"natural\"=\"peak\"][\"name\"](" + bx + ");out body;";
     const data = await overpass(q);
     App.ways = { box, ways: data.elements.filter(x => x.type === "way" && x.geometry),
       places: data.elements.filter(x => x.type === "node" && x.tags && x.tags.name).map(x => ({ lat: x.lat, lon: x.lon, n: x.tags.name, peak: x.tags.natural === "peak" })) };
-    runAnalysis(true);
+    btn.textContent = "Calculando rutas a pie…";
+    await runAnalysis(true);
   } catch (e) {
+    console.error(e);
     toast("No he podido descargar los caminos de OpenStreetMap. Prueba otra vez en un momento.");
   } finally { btn.disabled = false; btn.textContent = "Buscar los mejores puntos en lo que veo"; }
 }
-function runAnalysis(fit) {
-  const { box, ways } = App.ways;
+let anaRun = 0;
+function runAnalysis(fit) { return runAnalysisAsync(fit).catch(e => { console.error(e); toast("No he podido calcular las rutas a pie: " + e.message); }); }
+async function runAnalysisAsync(fit) {
+  const { box, ways } = App.ways, run = ++anaRun;
   seedRatings(ways);
-  const res = analyzeWindow(App.grid, App.scores, App.th, box, ways, Object.assign({}, App.prefs, { ratings: App.ratings }), App.me);
+  const lc = await lcWindowFor(box); if (run !== anaRun) return; // se ha pedido otro cálculo mientras tanto
+  await new Promise(r => setTimeout(r, 30)); // deja pintar el aviso antes del cálculo
+  const res = analyzeWindow(App.grid, App.scores, App.th, box, ways, Object.assign({}, App.prefs, { ratings: App.ratings }), App.me, lc);
   App.net = res.net;
   drawRoads(ways, res.net);
   if (!res.net.hasPaved) toast("No encuentro carretera asfaltada cerca de esta zona: mueve el mapa o amplía la búsqueda");
@@ -225,6 +258,7 @@ const ROAD_COL = ["#1a5fb4", "#2e8b57", "#e08a00", "#c0392b"];
 function drawRoads(ways, net) {
   layerCar.clearLayers(); const ok = new Set(net.reach.map(s => s.way)), lvl = App.prefs.carLevel;
   for (const wy of ways) {
+    if (!wy.tags || !wy.tags.highway) continue;
     const c = wy._cls; if (c == null || c < 0 || !wy.geometry) { if (c === -1 && App.ratings[wy.id] === "no") L.polyline(wy.geometry.map(p => [p.lat, p.lon]), { color: "#666", weight: 3, dashArray: "2 6" }).on("click", e => ratePopup(wy, e.latlng)).addTo(layerCar); continue; }
     const reach = ok.has(wy.id);
     L.polyline(wy.geometry.map(p => [p.lat, p.lon]), { color: ROAD_COL[c], weight: reach ? 4 : 3, opacity: reach ? .85 : .5, dashArray: reach ? null : "5 7" })
@@ -263,7 +297,10 @@ function drawSpots() {
     m.on("click", () => showSpotPopup(i));
     if (s.park) {
       L.marker([s.park.lat, s.park.lon], { icon: parkIcon, interactive: false }).addTo(layerSpots);
-      L.polyline([[s.park.lat, s.park.lon], [s.lat, s.lon]], { color: "#1a5fb4", weight: 2, dashArray: "3 6", interactive: false }).addTo(layerSpots);
+      if (s.route && s.route.length > 1) { // ruta a pie real (sin cruzar vías, ríos ni vallas)
+        L.polyline(s.route, { color: "#fff", weight: 6, opacity: .8, interactive: false }).addTo(layerSpots);
+        L.polyline(s.route, { color: "#7a3fb0", weight: 3, opacity: .95, interactive: false }).addTo(layerSpots);
+      } else L.polyline([[s.park.lat, s.park.lon], [s.lat, s.lon]], { color: "#1a5fb4", weight: 2, dashArray: "3 6", interactive: false }).addTo(layerSpots);
     }
   });
 }
@@ -280,9 +317,10 @@ const CROWD = c => c < .33 ? "poca gente probable" : c < .6 ? "afluencia media p
 function spotLine(s) {
   const d = dirIdx(s.aspect), bits = [];
   if (App.me) bits.push("a " + fmtDist(kmDist(App.me.lat, App.me.lon, s.lat, s.lon) * 1000) + " de ti");
-  if (s.walk != null) bits.push(fmtDist(s.walk) + " andando desde el coche");
+  if (s.walk != null) bits.push((s.route ? "ruta a pie de " : "") + fmtDist(s.walk) + " desde el coche");
   if (s.park) { const wn = wayName(s.park.way); bits.push((s.park.dirt > 30 ? "en coche, " + fmtDist(s.park.dirt) + " de tierra desde el asfalto" : "aparcas junto al asfalto") + (wn ? " (" + wn + ")" : "")); }
   if (s.prof) bits.push(s.prof.up + s.prof.down < 15 ? "casi sin desnivel" : "sube " + s.prof.up + " m y baja " + s.prof.down + " m");
+  if (s.cover != null) bits.push(LC_CLASS_NAMES[s.cover] + ", " + fmt(s.forest * 100) + " % de bosque bueno alrededor");
   if (s.crowd != null) bits.push(CROWD(s.crowd));
   bits.push((s.slope < 6 ? "llano" : s.slope < 12 ? "suave" : "inclinado") + " (" + fmt(s.slope) + "°)" + (s.slope >= 4 ? ", mira al " + DIRL[d] : ""));
   bits.push(fmtDist(s.dPath) + " del camino o sendero más cercano");
@@ -298,7 +336,7 @@ function renderSpotList() {
     li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[s.level] + '">' + (i + 1) + '</span><span class="tt"><b>' + esc(spotPlace(s)) + "</b><small>" + ABS_NAMES[s.level] + " · " + esc(spotLine(s)) + '</small></span><span class="sc" title="Índice ajustado a tus preferencias">' + fmt(s.adj) + '</span></div><div class="acts"></div>';
     const acts = li.querySelector(".acts");
     if (s.park) acts.append(mkBtn("Ir en coche", () => window.open(carUrl(s.park.lat, s.park.lon), "_blank"), "primary small"));
-    acts.append(mkBtn("Guiarme a pie", () => startGuide(s.lat, s.lon, "Punto " + (i + 1) + " · " + spotPlace(s)), "small"));
+    acts.append(mkBtn("Guiarme a pie", () => startGuide(s.lat, s.lon, "Punto " + (i + 1) + " · " + spotPlace(s), s.route), "small"));
     acts.append(mkBtn("Ver", () => { map.flyTo([s.lat, s.lon], 16); showSpotPopup(i); }, "small"));
     ol.append(li);
   });
@@ -306,10 +344,10 @@ function renderSpotList() {
 function mkBtn(txt, fn, cls) { const b = document.createElement("button"); b.type = "button"; b.className = "btn " + (cls || ""); b.textContent = txt; b.onclick = fn; return b; }
 function showSpotPopup(i) {
   const s = App.analysis.spots[i]; const div = document.createElement("div"); div.className = "pop";
-  div.innerHTML = "<b>Punto " + (i + 1) + " · " + esc(spotPlace(s)) + "</b><div>" + ABS_NAMES[s.level] + " (índice " + fmt(s.score) + ")</div><div>" + esc(spotLine(s)) + "</div><dl><dt>Altitud</dt><dd>" + fmt(s.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(s.tree * 100) + " % arbolado, " + fmtDist(s.edge) + " dentro</dd></dl><div class=\"acts\"></div>";
+  div.innerHTML = "<b>Punto " + (i + 1) + " · " + esc(spotPlace(s)) + "</b><div>" + ABS_NAMES[s.level] + " (índice " + fmt(s.score) + ")</div><div>" + esc(spotLine(s)) + "</div><dl><dt>Altitud</dt><dd>" + fmt(s.z) + " m</dd><dt>Bosque</dt><dd>" + (s.cover != null ? esc(LC_CLASS_NAMES[s.cover]) + ", " : "") + fmtDist(s.edge) + " dentro del bosque</dd></dl><div class=\"acts\"></div>";
   const acts = div.querySelector(".acts");
   if (s.park) acts.append(mkBtn("Ir en coche", () => window.open(carUrl(s.park.lat, s.park.lon), "_blank"), "primary"));
-  acts.append(mkBtn("Guiarme a pie", () => { map.closePopup(); startGuide(s.lat, s.lon, "Punto " + (i + 1)); }));
+  acts.append(mkBtn("Guiarme a pie", () => { map.closePopup(); startGuide(s.lat, s.lon, "Punto " + (i + 1), s.route); }));
   L.popup({ maxWidth: 290 }).setLatLng([s.lat, s.lon]).setContent(div).openOn(map);
 }
 
@@ -320,7 +358,8 @@ map.on("click", e => {
   if (!ci) { div.textContent = "Fuera del Bages."; }
   else {
     const d = dirIdx(ci.aspect);
-    div.innerHTML = "<b>" + (ci.v > 0 ? ABS_NAMES[ci.level] + " · índice " + fmt(ci.v) + " de 100" : "Sin bosque o terreno no apto") + "</b>" + (ci.v > 0 ? "<div>" + ["", "Entre el 25 % mejor del Bages hoy", "Entre el 10 % mejor del Bages hoy", "Entre el 3 % mejor del Bages hoy"][ci.rel] + "</div>" : "") + "<dl><dt>Terreno</dt><dd>" + (ci.slope < 6 ? "llano" : ci.slope < 12 ? "suave" : "inclinado") + " (" + fmt(ci.slope) + "°)" + (ci.slope >= 4 ? ", mira al " + DIRL[d] : "") + "</dd><dt>Altitud</dt><dd>" + fmt(ci.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(ci.tree * 100) + " % arbolado" + (ci.edge > 0 ? ", " + fmtDist(ci.edge) + " dentro" : "") + "</dd></dl><div class=\"acts\"></div>";
+    div.innerHTML = "<b>" + (ci.v > 0 ? ABS_NAMES[ci.level] + " · índice " + fmt(ci.v) + " de 100" : "Sin bosque o terreno no apto") + "</b>" + (ci.v > 0 ? "<div>" + ["", "Entre el 25 % mejor del Bages hoy", "Entre el 10 % mejor del Bages hoy", "Entre el 3 % mejor del Bages hoy"][ci.rel] + "</div>" : "") + "<dl><dt>Terreno</dt><dd>" + (ci.slope < 6 ? "llano" : ci.slope < 12 ? "suave" : "inclinado") + " (" + fmt(ci.slope) + "°)" + (ci.slope >= 4 ? ", mira al " + DIRL[d] : "") + "</dd><dt>Altitud</dt><dd>" + fmt(ci.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(ci.tree * 100) + " % arbolado" + (ci.edge > 0 ? ", " + fmtDist(ci.edge) + " dentro" : "") + "</dd><dt>Aquí mismo</dt><dd class=\"lcc\">…</dd></dl><div class=\"acts\"></div>";
+    lcClassAt(e.latlng.lat, e.latlng.lng).then(c => { const dd = div.querySelector(".lcc"); if (dd) dd.textContent = c == null ? "–" : LC_CLASS_NAMES[c] + " (ICGC)"; }).catch(() => { });
     const acts = div.querySelector(".acts"), la = e.latlng.lat, lo = e.latlng.lng;
     acts.append(mkBtn("Guiarme a pie", () => { map.closePopup(); startGuide(la, lo, "Punto marcado"); }));
     acts.append(mkBtn("Ir en coche", () => goByCar(la, lo), "primary"));
@@ -394,19 +433,44 @@ map.on("dragstart", () => { if (App.follow) { App.follow = false; $("#followBtn"
 /* ---------- Guía a pie ---------- */
 let guideLine = null;
 function bearing(a, b) { const f1 = a.lat * Math.PI / 180, f2 = b.lat * Math.PI / 180, dl = (b.lon - a.lon) * Math.PI / 180; const y = Math.sin(dl) * Math.cos(f2), x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl); return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360; }
-function startGuide(lat, lon, label) {
-  App.guide = { lat, lon, label }; $("#guide").hidden = false; startGPS(false); startCompass(); collapseSheet(); updateGuide();
+function startGuide(lat, lon, label, route) {
+  App.guide = { lat, lon, label, route: route && route.length > 1 ? route : null }; $("#guide").hidden = false; startGPS(false); startCompass(); collapseSheet(); updateGuide();
+}
+// Posición sobre la ruta: punto más cercano, distancia que queda por la ruta y punto al que apuntar (unos 25 m por delante)
+function routeProgress(me, R) {
+  const cx = Math.cos(me.lat * Math.PI / 180) * 111320, cy = 110540, P = R.map(p => [(p[1] - me.lon) * cx, (p[0] - me.lat) * cy]);
+  const len = [0]; for (let i = 1; i < P.length; i++) len.push(len[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+  let best = { d: 1e12, at: 0, i: 0, t: 0 };
+  for (let i = 1; i < P.length; i++) {
+    const [ax, ay] = P[i - 1], [bx, by] = P[i], vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy, t = L2 ? Math.max(0, Math.min(1, -(ax * vx + ay * vy) / L2)) : 0;
+    const d = Math.hypot(ax + t * vx, ay + t * vy); if (d < best.d) best = { d, at: len[i - 1] + t * Math.sqrt(L2), i, t };
+  }
+  const total = len[len.length - 1], ahead = Math.min(total, best.at + 25);
+  let k = 1; while (k < len.length - 1 && len[k] < ahead) k++;
+  const f = len[k] > len[k - 1] ? (ahead - len[k - 1]) / (len[k] - len[k - 1]) : 1, A = R[k - 1], B = R[k];
+  const proj = R[best.i - 1].map((v, j) => v + (R[best.i][j] - v) * best.t);
+  return { off: best.d, left: total - best.at, target: { lat: A[0] + (B[0] - A[0]) * f, lon: A[1] + (B[1] - A[1]) * f }, proj, rest: [proj, ...R.slice(best.i)] };
 }
 function updateGuide() {
   const G = App.guide; if (!G) return;
   if (!App.me) { $("#gDist").textContent = "–"; $("#gInfo").textContent = G.label + " · buscando señal GPS…"; return; }
-  const d = kmDist(App.me.lat, App.me.lon, G.lat, G.lon) * 1000, br = bearing(App.me, G);
-  const rot = App.heading == null ? br : br - App.heading;
+  const direct = kmDist(App.me.lat, App.me.lon, G.lat, G.lon) * 1000;
+  let d = direct, tgt = G, pts = [[App.me.lat, App.me.lon], [G.lat, G.lon]], note = "";
+  if (G.route) {
+    const rp = routeProgress(App.me, G.route);
+    if (rp.off > 60 && direct < rp.left) { note = "fuera de la ruta"; } // ya estás en el bosque, cerca del punto: directo
+    else {
+      d = rp.left + (rp.off > 15 ? rp.off : 0); tgt = rp.off > 15 ? { lat: rp.proj[0], lon: rp.proj[1] } : rp.target;
+      pts = rp.off > 15 ? [[App.me.lat, App.me.lon], ...rp.rest] : rp.rest;
+      note = rp.off > 15 ? (rp.off > 100 ? "ve a la ruta, a " : "vuelve a la ruta, a ") + fmtDist(rp.off) : "siguiendo la ruta";
+    }
+  }
+  const br = bearing(App.me, tgt), rot = App.heading == null ? br : br - App.heading;
   $("#gArrow").style.transform = "rotate(" + rot + "deg)";
-  $("#gDist").textContent = d < 20 ? "¡Aquí!" : fmtDist(d);
-  $("#gInfo").textContent = G.label + " · al " + DIRL[dirIdx(br)] + " · " + Math.max(1, Math.round(d * 1.3 / 60)) + " min · " + (App.heading == null ? "flecha respecto al norte (sin brújula)" : "brújula activa") + " · GPS ±" + Math.round(App.me.acc) + " m";
-  const pts = [[App.me.lat, App.me.lon], [G.lat, G.lon]];
-  if (!guideLine) guideLine = L.polyline(pts, { color: "#b4531f", weight: 3, dashArray: "6 6", interactive: false }).addTo(map); else guideLine.setLatLngs(pts);
+  $("#gDist").textContent = direct < 20 ? "¡Aquí!" : fmtDist(d);
+  $("#gInfo").textContent = G.label + (note ? " · " + note : "") + " · hacia el " + DIRL[dirIdx(br)] + " · " + Math.max(1, Math.round(d * 1.15 / 60)) + " min · " + (App.heading == null ? "flecha respecto al norte (sin brújula)" : "brújula activa") + " · GPS ±" + Math.round(App.me.acc) + " m";
+  const style = G.route ? { color: "#7a3fb0", weight: 4, opacity: .9, interactive: false } : { color: "#b4531f", weight: 3, dashArray: "6 6", interactive: false };
+  if (!guideLine) guideLine = L.polyline(pts, style).addTo(map); else guideLine.setLatLngs(pts).setStyle(style);
 }
 $("#gStop").onclick = () => { App.guide = null; $("#guide").hidden = true; if (guideLine) { map.removeLayer(guideLine); guideLine = null; } };
 

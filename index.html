@@ -55,7 +55,7 @@
 
   <div class="panel" id="p-cerca" role="tabpanel" hidden>
     <button id="analyzeBtn" class="btn primary wide" type="button">Buscar los mejores puntos en lo que veo</button>
-    <p class="hint" id="analyzeHint">Usa los caminos reales de OpenStreetMap: evita lo más pisado y comprueba que puedas llegar en coche. Acerca el mapa a la zona que te interese (unos 5 km).</p>
+    <p class="hint" id="analyzeHint">Usa los caminos reales de OpenStreetMap y el mapa de bosque del ICGC: busca dónde aparcar con tu coche y traza la ruta a pie hasta bosque de verdad, sin cruzar vías de tren, ríos, autovías ni vallas. Acerca el mapa a la zona que te interese (unos 5 km).</p>
     <ol id="spots" class="spots"></ol>
   </div>
 
@@ -117,15 +117,21 @@
         <li><b>La lluvia por episodios.</b> Cada episodio de lluvia da una salida de setas entre los días 10 y 17 después de acabar, y se apaga hacia el día 25. Cuanta más lluvia, más fuerza. Si después vienen muchos días secos, y más aún si hace calor, la salida se malogra. No se suman episodios.</li>
         <li>La temperatura de la última semana, corregida por altitud.</li>
         <li>La época del año.</li>
-        <li>El tipo de bosque, estimado por zonas.</li>
-        <li>El bosque real visto por satélite (ESA WorldCover, 10 m).</li>
+        <li>El bosque real, del mapa de cubiertas del suelo del ICGC (2024, detalle de 1 m): pinar denso, pinar claro, encinar o robledal, bosque de ribera, matorral… Un matorral, un campo o una franja de árboles entre cultivos no puntúan.</li>
         <li>Lo lejos que estás del borde del bosque.</li>
         <li>La pendiente, la orientación y las vaguadas.</li>
       </ul>
       <p>Los <b>colores del mapa</b> son relativos: marcan el 3 %, el 10 % y el 25 % mejor del bosque del Bages en ese día. Un día malo también hay rojo, así que mira el nivel en la parte inferior.</p>
-      <p>«Buscar puntos» descarga los caminos de OpenStreetMap de la zona que ves. Con ellos aparta lo más pisado, calcula dónde dejar el coche según los caminos que aceptas y comprueba el desnivel en línea recta entre el coche y el punto.</p>
+      <p>«Buscar puntos» descarga los caminos de OpenStreetMap de la zona que ves y calcula:</p>
+      <ul>
+        <li>Dónde puedes dejar el coche, según los caminos que aceptas.</li>
+        <li>La <b>ruta a pie</b> real, en cuadritos de 10 m. No cruza vías de tren, autovías, ríos, canales, vallas, cortados, agua ni zonas industriales, salvo por un camino que pase (puente, túnel o paso a nivel). Evita las pendientes muy fuertes y cuenta lo que sube y baja.</li>
+        <li>Que el punto esté en <b>bosque adecuado de verdad</b>: el cuadrito y al menos el 60 % de lo que lo rodea (unos 60 m).</li>
+        <li>Que quede lejos de lo más pisado.</li>
+      </ul>
+      <p>La guía a pie sigue esa ruta.</p>
       <p><b>Afluencia probable.</b> No hay datos reales de cuánta gente busca setas en cada sitio. La app la estima con lo que suele atraer a la gente: estar cerca del asfalto o del coche, cerca de pueblos o urbanizaciones, o en una zona con muchos caminos. Con «Evitar donde va todo el mundo» penaliza esas zonas y exige andar un mínimo.</p>
-      <p>Datos: Meteocat (XEMA, datos abiertos de la Generalitat), Open-Meteo, Copernicus DEM, ESA WorldCover, OpenStreetMap. Es una estimación, no una garantía. Respeta los carteles, las fincas privadas y las batidas de caza.</p>
+      <p>Datos: Meteocat (XEMA, datos abiertos de la Generalitat), Open-Meteo, Copernicus DEM, ICGC (cubiertas del suelo 2024, CC BY 4.0), OpenStreetMap. Es una estimación, no una garantía. Respeta los carteles, las fincas privadas y las batidas de caza.</p>
       <p id="version" class="hint"></p>
     </details>
   </div>
