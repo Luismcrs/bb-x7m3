@@ -1,6 +1,6 @@
 /* Bolets Bages · app */
 "use strict";
-const VERSION = "1.3 · 25-10-2026";
+const VERSION = "1.4 · 25-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -195,9 +195,10 @@ async function analyze() {
   try {
     const bb = [box.s, box.w, box.n, box.e].map(v => v.toFixed(5)).join(","), M = .02;
     const bx = [box.s - M, box.w - M * 1.3, box.n + M, box.e + M * 1.3].map(v => v.toFixed(5)).join(",");
-    const q = "[out:json][timeout:45];(way[\"highway\"](" + bb + ");way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|road)\"](" + bx + "););out body geom;";
+    const q = "[out:json][timeout:45];(way[\"highway\"](" + bb + ");way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|road)\"](" + bx + "););out body geom;node[\"place\"~\"^(village|hamlet|isolated_dwelling|farm|locality|neighbourhood|town)$\"][\"name\"](" + bx + ");node[\"natural\"=\"peak\"][\"name\"](" + bx + ");out body;";
     const data = await overpass(q);
-    App.ways = { box, ways: data.elements.filter(x => x.type === "way" && x.geometry) };
+    App.ways = { box, ways: data.elements.filter(x => x.type === "way" && x.geometry),
+      places: data.elements.filter(x => x.type === "node" && x.tags && x.tags.name).map(x => ({ lat: x.lat, lon: x.lon, n: x.tags.name, peak: x.tags.natural === "peak" })) };
     runAnalysis(true);
   } catch (e) {
     toast("No he podido descargar los caminos de OpenStreetMap. Prueba otra vez en un momento.");
@@ -267,11 +268,22 @@ function drawSpots() {
   });
 }
 const carUrl = (la, lo) => "https://www.google.com/maps/dir/?api=1&destination=" + la.toFixed(5) + "," + lo.toFixed(5) + "&travelmode=driving";
+function muniOf(lat, lon) { const k = App.grid ? App.grid.idx(lat, lon) : -1; const m = k >= 0 && App.munis ? App.munis.find(x => x.id === App.muniArr[k]) : null; return m ? m.n : ""; }
+function spotPlace(s) {
+  let t = muniOf(s.lat, s.lon), best = null, bd = 4000;
+  for (const p of (App.ways && App.ways.places) || []) { const d = kmDist(s.lat, s.lon, p.lat, p.lon) * 1000; if (d < bd) { bd = d; best = p; } }
+  if (best) t += (t ? " · " : "") + (bd < 120 ? "junto a " + best.n : fmtDist(bd) + " al " + DIRL[dirIdx(bearing(best, s))] + " de " + best.n);
+  return t || (s.lat.toFixed(4) + ", " + s.lon.toFixed(4));
+}
+function wayName(id) { const w = App.ways && App.ways.ways.find(x => x.id === id); return w && w.tags && w.tags.name ? w.tags.name : ""; }
+const CROWD = c => c < .33 ? "poca gente probable" : c < .6 ? "afluencia media probable" : "zona concurrida probable";
 function spotLine(s) {
   const d = dirIdx(s.aspect), bits = [];
   if (App.me) bits.push("a " + fmtDist(kmDist(App.me.lat, App.me.lon, s.lat, s.lon) * 1000) + " de ti");
   if (s.walk != null) bits.push(fmtDist(s.walk) + " andando desde el coche");
-  if (s.park) bits.push(s.park.dirt > 30 ? "en coche, " + fmtDist(s.park.dirt) + " de tierra desde el asfalto" : "aparcas junto al asfalto");
+  if (s.park) { const wn = wayName(s.park.way); bits.push((s.park.dirt > 30 ? "en coche, " + fmtDist(s.park.dirt) + " de tierra desde el asfalto" : "aparcas junto al asfalto") + (wn ? " (" + wn + ")" : "")); }
+  if (s.prof) bits.push(s.prof.up + s.prof.down < 15 ? "casi sin desnivel" : "sube " + s.prof.up + " m y baja " + s.prof.down + " m");
+  if (s.crowd != null) bits.push(CROWD(s.crowd));
   bits.push((s.slope < 6 ? "llano" : s.slope < 12 ? "suave" : "inclinado") + " (" + fmt(s.slope) + "°)" + (s.slope >= 4 ? ", mira al " + DIRL[d] : ""));
   bits.push(fmtDist(s.dPath) + " del camino o sendero más cercano");
   return bits.join(" · ");
@@ -283,10 +295,10 @@ function renderSpotList() {
   if (A.sp !== App.prefs.sp) ol.insertAdjacentHTML("beforeend", '<li class="hint">Estos puntos son de otra especie. Vuelve a buscar.</li>');
   A.spots.forEach((s, i) => {
     const li = document.createElement("li"); li.className = "spot";
-    li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[s.level] + '">' + (i + 1) + '</span><span class="tt"><b>' + ABS_NAMES[s.level] + "</b><small>" + esc(spotLine(s)) + '</small></span><span class="sc" title="Índice ajustado a tus preferencias">' + fmt(s.adj) + '</span></div><div class="acts"></div>';
+    li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[s.level] + '">' + (i + 1) + '</span><span class="tt"><b>' + esc(spotPlace(s)) + "</b><small>" + ABS_NAMES[s.level] + " · " + esc(spotLine(s)) + '</small></span><span class="sc" title="Índice ajustado a tus preferencias">' + fmt(s.adj) + '</span></div><div class="acts"></div>';
     const acts = li.querySelector(".acts");
     if (s.park) acts.append(mkBtn("Ir en coche", () => window.open(carUrl(s.park.lat, s.park.lon), "_blank"), "primary small"));
-    acts.append(mkBtn("Guiarme a pie", () => startGuide(s.lat, s.lon, "Punto " + (i + 1)), "small"));
+    acts.append(mkBtn("Guiarme a pie", () => startGuide(s.lat, s.lon, "Punto " + (i + 1) + " · " + spotPlace(s)), "small"));
     acts.append(mkBtn("Ver", () => { map.flyTo([s.lat, s.lon], 16); showSpotPopup(i); }, "small"));
     ol.append(li);
   });
@@ -294,7 +306,7 @@ function renderSpotList() {
 function mkBtn(txt, fn, cls) { const b = document.createElement("button"); b.type = "button"; b.className = "btn " + (cls || ""); b.textContent = txt; b.onclick = fn; return b; }
 function showSpotPopup(i) {
   const s = App.analysis.spots[i]; const div = document.createElement("div"); div.className = "pop";
-  div.innerHTML = "<b>Punto " + (i + 1) + " · " + ABS_NAMES[s.level] + " (índice " + fmt(s.score) + ")</b><div>" + esc(spotLine(s)) + "</div><dl><dt>Altitud</dt><dd>" + fmt(s.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(s.tree * 100) + " % arbolado, " + fmtDist(s.edge) + " dentro</dd></dl><div class=\"acts\"></div>";
+  div.innerHTML = "<b>Punto " + (i + 1) + " · " + esc(spotPlace(s)) + "</b><div>" + ABS_NAMES[s.level] + " (índice " + fmt(s.score) + ")</div><div>" + esc(spotLine(s)) + "</div><dl><dt>Altitud</dt><dd>" + fmt(s.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(s.tree * 100) + " % arbolado, " + fmtDist(s.edge) + " dentro</dd></dl><div class=\"acts\"></div>";
   const acts = div.querySelector(".acts");
   if (s.park) acts.append(mkBtn("Ir en coche", () => window.open(carUrl(s.park.lat, s.park.lon), "_blank"), "primary"));
   acts.append(mkBtn("Guiarme a pie", () => { map.closePopup(); startGuide(s.lat, s.lon, "Punto " + (i + 1)); }));
@@ -570,9 +582,9 @@ function renderPlan() {
     const li = document.createElement("li"); li.className = "spot"; const lv = absLevel(z.q), dI = dirIdx(z.aspect);
     const drive = (z.drive != null ? z.drive : "~" + z.est) + " min en coche";
     const ha = Math.round(z.good * .071);
-    li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[lv] + '">' + (i + 1) + '</span><span class="tt"><b>' + esc(z.n) + " · " + ABS_NAMES[lv] + "</b><small>" + esc(drive + " · mejor sitio: " + (z.slope < 6 ? "llano" : z.slope < 12 ? "suave" : "inclinado") + (z.slope >= 4 ? ", mira al " + DIRL[dI] : "") + ", " + fmtDist(z.edge) + " dentro del bosque" + (ha > 0 ? " · " + fmt(ha) + " ha de zona media o mejor" : "")) + '</small></span><span class="sc">' + fmt(z.q) + '</span></div><div class="acts"></div>';
+    li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[lv] + '">' + (i + 1) + '</span><span class="tt"><b>' + esc(z.n) + " · " + ABS_NAMES[lv] + '</b><small><span data-zone="' + z.id + '"></span>' + esc(drive + " · mejor sitio: " + (z.slope < 6 ? "llano" : z.slope < 12 ? "suave" : "inclinado") + (z.slope >= 4 ? ", mira al " + DIRL[dI] : "") + ", " + fmtDist(z.edge) + " dentro del bosque" + (ha > 0 ? " · " + fmt(ha) + " ha de zona media o mejor" : "")) + '</small></span><span class="sc">' + fmt(z.q) + '</span></div><div class="acts"></div>';
     const acts = li.querySelector(".acts");
-    acts.append(mkBtn("Ver zona y buscar puntos", () => openPlanZone(z, d.date), "primary small"));
+    acts.append(mkBtn("Ver zona", () => openPlanZone(z, d.date), "primary small"));
     acts.append(mkBtn("Ir en coche", () => goByCar(z.lat, z.lon), "small"));
     ol.append(li);
   });
@@ -580,7 +592,27 @@ function renderPlan() {
     const sh = window.innerWidth >= 760 ? 0 : sheet.getBoundingClientRect().height, sw = window.innerWidth >= 760 ? 420 : 0;
     map.fitBounds(L.latLngBounds(show.map(z => [z.lat, z.lon])).pad(.15), { paddingTopLeft: [sw + 20, 70], paddingBottomRight: [60, sh + 20], maxZoom: 12 });
   }
-  driveTimes(show, P.sel);
+  driveTimes(show, P.sel); fillZonePlaces(show);
+}
+const geoCache = LS.get("bb.geo", {});
+let geoQ = Promise.resolve();
+function placeName(lat, lon) {
+  const key = lat.toFixed(3) + "," + lon.toFixed(3); if (key in geoCache) return Promise.resolve(geoCache[key]);
+  geoQ = geoQ.then(async () => {
+    if (key in geoCache) return geoCache[key];
+    try {
+      const r = await fetchJSON("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=15&accept-language=ca,es&lat=" + lat.toFixed(5) + "&lon=" + lon.toFixed(5), 10000);
+      const a = r.address || {}; geoCache[key] = a.hamlet || a.isolated_dwelling || a.farm || a.locality || a.village || a.suburb || a.town || a.city || null; LS.set("bb.geo", geoCache);
+    } catch (e) { return null; }
+    await new Promise(r => setTimeout(r, 1100)); return geoCache[key];
+  });
+  return geoQ;
+}
+async function fillZonePlaces(zs) {
+  for (const z of zs) {
+    const n = await placeName(z.lat, z.lon); z.place = n;
+    const el = document.querySelector('#zones [data-zone="' + z.id + '"]'); if (el && n && n !== z.n) el.textContent = "cerca de " + n + " · ";
+  }
 }
 async function driveTimes(zs, sel) {
   const P = App.plan, need = zs.filter(z => P.drive[z.id + "@" + sel] == null); if (!need.length) return;
@@ -596,9 +628,9 @@ function openPlanZone(z, date) {
   const changed = (App.date ? dayKey(App.date) : dayKey(new Date())) !== dayKey(date);
   App.date = isToday(date) ? null : date;
   if (changed) { summarize(); recompute(); }
-  App.ways = null; collapseSheet();
-  map.once("moveend", () => { openSheet("cerca"); analyze(); });
+  collapseSheet();
   map.flyTo([z.lat, z.lon], 14, { duration: 1.2 });
+  map.once("moveend", () => toast("Zona de " + z.n + (z.place ? " (" + z.place + ")" : "") + ". Si quieres puntos concretos, abre «Cerca» y pulsa «Buscar puntos».", 5000));
 }
 $("#homeHere").onclick = () => {
   if (!App.me) { startGPS(false); toast("Buscando tu posición… vuelve a pulsar cuando aparezca el punto azul"); return; }
@@ -614,7 +646,8 @@ const SL = {
   walkMax: v => fmtDist(v), shade: v => fmt(v * 100) + " %", hollow: v => fmt(v * 100) + " %",
   minLevel: v => ["", "25 % mejor", "10 % mejor", "3 % mejor"][v], opacity: v => fmt(v * 100) + " %",
   maxDrive: v => v + " min",
-  carLevel: v => CAR_LEVELS[v], dirtMax: v => v == 0 ? "nada de tierra" : fmtDist(v)
+  carLevel: v => CAR_LEVELS[v], dirtMax: v => v == 0 ? "nada de tierra" : fmtDist(v),
+  climbMax: v => (App.prefs.kids && v > 40 ? "40 m (modo niños)" : v + " m"), minWalk: v => v == 0 ? "da igual" : "al menos " + fmtDist(v)
 };
 const HEAVY = new Set(["flat", "interior", "shade", "hollow"]);
 let rcT = null;
@@ -625,7 +658,7 @@ function bindPrefs() {
       App.prefs[k] = +el.value; $("#" + k + "V").textContent = SL[k](+el.value); LS.set("bb.prefs", App.prefs);
       if (k === "opacity") { if (overlay) overlay.setOpacity(App.prefs.opacity); return; }
       if (k === "maxDrive") { renderPlan(); return; }
-      if (k === "carLevel" || k === "dirtMax") { clearTimeout(rcT); rcT = setTimeout(() => { if (App.ways) runAnalysis(false); }, 300); return; }
+      if (k === "carLevel" || k === "dirtMax" || k === "climbMax" || k === "minWalk") { clearTimeout(rcT); rcT = setTimeout(() => { if (App.ways) runAnalysis(false); }, 300); return; }
       clearTimeout(rcT);
       rcT = setTimeout(() => { if (HEAVY.has(k)) recompute(); else if (k === "minLevel") renderOverlay(); else if (App.ways) runAnalysis(false); }, 300);
     };
@@ -636,6 +669,8 @@ function bindPrefs() {
     if (kd.checked) { App.prefs.walkMax = Math.min(App.prefs.walkMax, 300); App.prefs.pathMin = Math.min(App.prefs.pathMin, 30); }
     LS.set("bb.prefs", App.prefs); bindPrefs(); recompute(); App.plan = null;
   };
+  const ac = $("#avoidCrowd"); ac.checked = !!App.prefs.avoidCrowd;
+  ac.onchange = () => { App.prefs.avoidCrowd = ac.checked; LS.set("bb.prefs", App.prefs); if (App.ways) runAnalysis(false); toast(ac.checked ? "Evito las zonas más concurridas" : "Ya no evito las zonas concurridas"); };
 }
 $("#resetPrefs").onclick = () => { const sp = App.prefs.sp; App.prefs = Object.assign({}, DEFAULT_PREFS, { sp }); LS.set("bb.prefs", App.prefs); bindPrefs(); if (overlay) overlay.setOpacity(App.prefs.opacity); recompute(); toast("Ajustes por defecto"); };
 $("#refreshMeteo").onclick = async () => { await loadMeteo(true); summarize(); recompute(); meteoStatus(); renderMeteoTable(); toast("Meteo actualizada"); };

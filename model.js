@@ -27,7 +27,7 @@ const SPECIES = {
   camagroc: { n: "Camagroc",      lat: "Craterellus lutescens", aff: { pb: .55, pn: .8, ps: 1, al: .65, ro: .6 }, tmin: [3, 12], tmax: [9, 20],  season: ["10-05", "10-30", "01-10", "02-15"], rainMin: 25, rainFull: 90, asp: .15, hollow: 1, win: [0, 8, 12, 22, 30] }
 };
 
-const DEFAULT_PREFS = { sp: "rovello", flat: 0.7, interior: 90, shade: 1, hollow: 1, pathMin: 60, walkMax: 600, minLevel: 1, opacity: 0.7, kids: false, maxDrive: 45, carLevel: 2, dirtMax: 2000 };
+const DEFAULT_PREFS = { sp: "rovello", flat: 0.7, interior: 90, shade: 1, hollow: 1, pathMin: 60, walkMax: 600, minLevel: 1, opacity: 0.7, kids: false, maxDrive: 45, carLevel: 2, dirtMax: 2000, climbMax: 100, avoidCrowd: false, minWalk: 300 };
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function interp(x, xs, ys) {
@@ -310,7 +310,7 @@ function nearestParking(lat, lon, net) {
     const ax = (A.lon - lon) * cx, ay = (A.lat - lat) * cy, bx = (B.lon - lon) * cx, by = (B.lat - lat) * cy;
     const vx = bx - ax, vy = by - ay, L = vx * vx + vy * vy, t = L ? clamp(-(ax * vx + ay * vy) / L, 0, 1) : 0;
     const px = ax + t * vx, py = ay + t * vy, d = px * px + py * py;
-    if (d < bd) { bd = d; best = { lat: lat + py / cy, lon: lon + px / cx, dist: Math.sqrt(d), dirt: Math.round(net.dist.get(sg.a) * (1 - t) + net.dist.get(sg.b) * t), cls: sg.c }; }
+    if (d < bd) { bd = d; best = { lat: lat + py / cy, lon: lon + px / cx, dist: Math.sqrt(d), dirt: Math.round(net.dist.get(sg.a) * (1 - t) + net.dist.get(sg.b) * t), cls: sg.c, way: sg.way }; }
   }
   return best;
 }
@@ -324,12 +324,39 @@ function chamfer(mask, w, h, dx, dy) {
     if (j < w - 1) v = Math.min(v, d[k + 1] + dx); if (i < h - 1) { v = Math.min(v, d[k + w] + dy); if (j < w - 1) v = Math.min(v, d[k + w + 1] + dd); if (j > 0) v = Math.min(v, d[k + w - 1] + dd); } d[k] = v; }
   return d;
 }
+function chamferV(mask, val, w, h, dx, dy) {
+  const INF = 1e9, d = new Float32Array(w * h), v = new Float32Array(w * h), dd = Math.hypot(dx, dy);
+  for (let k = 0; k < w * h; k++) { d[k] = mask[k] ? 0 : INF; v[k] = mask[k] ? val[k] : NaN; }
+  const rel = (k, q, c) => { if (d[q] + c < d[k]) { d[k] = d[q] + c; v[k] = v[q]; } };
+  for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) { const k = i * w + j;
+    if (j > 0) rel(k, k - 1, dx); if (i > 0) { rel(k, k - w, dy); if (j > 0) rel(k, k - w - 1, dd); if (j < w - 1) rel(k, k - w + 1, dd); } }
+  for (let i = h - 1; i >= 0; i--) for (let j = w - 1; j >= 0; j--) { const k = i * w + j;
+    if (j < w - 1) rel(k, k + 1, dx); if (i < h - 1) { rel(k, k + w, dy); if (j < w - 1) rel(k, k + w + 1, dd); if (j > 0) rel(k, k + w - 1, dd); } }
+  return { d, v };
+}
+// Suma en un cuadrado de radio r (imagen integral)
+function boxMean(src, w, h, r) {
+  const I = new Float64Array((w + 1) * (h + 1));
+  for (let i = 0; i < h; i++) { let row = 0; for (let j = 0; j < w; j++) { row += src[i * w + j]; I[(i + 1) * (w + 1) + j + 1] = I[i * (w + 1) + j + 1] + row; } }
+  const out = new Float32Array(w * h);
+  for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) {
+    const a = Math.max(0, i - r), b = Math.min(h, i + r + 1), c = Math.max(0, j - r), e = Math.min(w, j + r + 1);
+    out[i * w + j] = (I[b * (w + 1) + e] - I[a * (w + 1) + e] - I[b * (w + 1) + c] + I[a * (w + 1) + c]) / ((b - a) * (e - c));
+  }
+  return out;
+}
+// Perfil en línea recta del coche al punto: metros que se suben y se bajan
+function climbProfile(grid, a, b) {
+  const L = kmDist(a.lat, a.lon, b.lat, b.lon) * 1000, n = Math.max(2, Math.ceil(L / 25)); let up = 0, down = 0, prev = null;
+  for (let t = 0; t <= n; t++) { const k = grid.idx(a.lat + (b.lat - a.lat) * t / n, a.lon + (b.lon - a.lon) * t / n); if (k < 0) continue; const z = grid.z(k); if (prev != null) { if (z > prev) up += z - prev; else down += prev - z; } prev = z; }
+  return { up: Math.round(up), down: Math.round(down) };
+}
 /* ways: elementos 'way' de Overpass (tags, nodes, geometry). Devuelve los mejores puntos a los que se llega con tu coche. */
 function analyzeWindow(grid, sc, th, bbox, ways, prefs, me) {
   const i0 = clamp(grid.rowOf(bbox.n), 0, grid.H - 1), i1 = clamp(grid.rowOf(bbox.s), 0, grid.H - 1);
   const j0 = clamp(grid.colOf(bbox.w), 0, grid.W - 1), j1 = clamp(grid.colOf(bbox.e), 0, grid.W - 1);
   const w = j1 - j0 + 1, h = i1 - i0 + 1; const dx = Math.abs(grid.dlon) * 111320 * Math.cos(41.78 * Math.PI / 180), dy = Math.abs(grid.dlat) * 111320;
-  const allM = new Uint8Array(w * h), carM = new Uint8Array(w * h);
+  const allM = new Uint8Array(w * h), carM = new Uint8Array(w * h), pavM = new Uint8Array(w * h), zSrc = new Float32Array(w * h);
   const mark = (M, la1, lo1, la2, lo2) => { // Bresenham sobre la ventana
     let y0 = grid.rowOf(la1) - i0, x0 = grid.colOf(lo1) - j0; const y1 = grid.rowOf(la2) - i0, x1 = grid.colOf(lo2) - j0;
     if ((y0 < -50 && y1 < -50) || (x0 < -50 && x1 < -50) || (y0 > h + 50 && y1 > h + 50) || (x0 > w + 50 && x1 > w + 50)) return;
@@ -338,30 +365,47 @@ function analyzeWindow(grid, sc, th, bbox, ways, prefs, me) {
   };
   for (const wy of ways) { const g = wy.geometry; if (!g || g.length < 2) continue; for (let i = 1; i < g.length; i++) mark(allM, g[i - 1].lat, g[i - 1].lon, g[i].lat, g[i].lon); }
   const net = roadNetwork(ways, prefs);
-  for (const sg of net.reach) { const A = net.nodes.get(sg.a), B = net.nodes.get(sg.b); mark(carM, A.lat, A.lon, B.lat, B.lon); }
-  const dPath = chamfer(allM, w, h, dx, dy), dCar = chamfer(carM, w, h, dx, dy);
+  for (const sg of net.reach) { const A = net.nodes.get(sg.a), B = net.nodes.get(sg.b); mark(carM, A.lat, A.lon, B.lat, B.lon); if (sg.c === 0) mark(pavM, A.lat, A.lon, B.lat, B.lon); }
+  for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) { const q = i * w + j; if (carM[q]) zSrc[q] = grid.zz[(i0 + i) * grid.W + j0 + j]; }
+  const dPath = chamfer(allM, w, h, dx, dy), CV = chamferV(carM, zSrc, w, h, dx, dy), dCar = CV.d, zCar = CV.v, dPav = chamfer(pavM, w, h, dx, dy);
+  // Afluencia probable (0–1): cerca del asfalto, de pueblos/urbanizaciones o con muchos caminos alrededor
+  const bm = new Uint8Array(w * h); for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) bm[i * w + j] = (grid.flags[(i0 + i) * grid.W + j0 + j] & 2) ? 1 : 0;
+  const builtNear = boxMean(bm, w, h, 25), pathDens = boxMean(allM, w, h, 8);
+  const crowd = new Float32Array(w * h);
+  for (let q = 0; q < w * h; q++) crowd[q] = clamp(.45 * clamp(1 - dPav[q] / 600, 0, 1) + .35 * clamp(pathDens[q] / .12, 0, 1) + .2 * clamp(builtNear[q] / .05, 0, 1) + .25 * clamp(1 - dCar[q] / 250, 0, 1), 0, 1);
+  const climbMax = prefs.kids ? Math.min(prefs.climbMax ?? 100, 40) : (prefs.climbMax ?? 100);
+  const minWalk = prefs.avoidCrowd ? (prefs.minWalk ?? 300) : 0, pathMin = prefs.avoidCrowd ? Math.max(prefs.pathMin, 120) : prefs.pathMin;
   const adj = new Float32Array(w * h);
   for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) {
     const k = (i0 + i) * grid.W + (j0 + j), q = i * w + j, v = sc[k]; if (!(v > 0)) continue;
-    if (dCar[q] * 1.3 > prefs.walkMax) continue;
-    const pf = prefs.pathMin > 0 ? .6 + .4 * clamp(dPath[q] / prefs.pathMin, 0, 1) : 1;
-    adj[q] = v * pf;
+    const walk = dCar[q] * 1.3; if (walk > prefs.walkMax || walk < minWalk) continue;
+    if (Math.abs(grid.zz[k] - zCar[q]) > climbMax) continue;
+    const pf = pathMin > 0 ? .6 + .4 * clamp(dPath[q] / pathMin, 0, 1) : 1;
+    adj[q] = v * pf * (prefs.avoidCrowd ? 1 - .5 * crowd[q] : 1);
   }
   const sm = new Float32Array(w * h);
   for (let i = 1; i < h - 1; i++) for (let j = 1; j < w - 1; j++) { let s = 0, c = 0; for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const v = adj[(i + a) * w + j + b]; if (v > 0) { s += v; c++; } } sm[i * w + j] = c >= 6 ? s / 9 : 0; }
   const cand = []; for (let q = 0; q < w * h; q++) if (sm[q] > 0) cand.push(q);
   cand.sort((a, b) => sm[b] - sm[a]);
   const picks = [], sep = 300;
-  for (const q of cand) { const i = Math.floor(q / w), j = q % w; if (picks.every(p => Math.hypot((p.i - i) * dy, (p.j - j) * dx) >= sep)) { picks.push({ q, i, j }); if (picks.length >= 15) break; } }
+  let tried = 0;
+  for (const q of cand) {
+    const i = Math.floor(q / w), j = q % w; if (!picks.every(p => Math.hypot((p.i - i) * dy, (p.j - j) * dx) >= sep)) continue;
+    if (++tried > 250) break;
+    // desnivel real en línea recta desde donde aparcas (sube y baja), no solo la diferencia entre los dos extremos
+    const lat = grid.latOf(i0 + i), lon = grid.lonOf(j0 + j), park = nearestParking(lat, lon, net), prof = park ? climbProfile(grid, park, { lat, lon }) : null;
+    if (prof && Math.max(prof.up, prof.down) > climbMax) continue;
+    picks.push({ q, i, j, park, prof }); if (picks.length >= 15) break;
+  }
   return {
     window: { i0, j0, w, h }, net,
     spots: picks.map(p => {
       const k = (i0 + p.i) * grid.W + (j0 + p.j), lat = grid.latOf(i0 + p.i), lon = grid.lonOf(j0 + p.j);
-      const park = nearestParking(lat, lon, net);
+      const park = p.park, prof = p.prof;
       return { lat, lon, score: sc[k], adj: sm[p.q], level: absLevel(sc[k]), slope: grid.slope(k), aspect: grid.aspect(k), z: grid.z(k), edge: grid.edge(k), tree: grid.tree(k),
-        dPath: Math.round(dPath[p.q]), walk: park ? Math.round(park.dist * 1.3) : null, park, fromMe: me ? kmDist(me.lat, me.lon, lat, lon) : null };
+        dPath: Math.round(dPath[p.q]), walk: park ? Math.round(park.dist * 1.3) : null, park, prof, crowd: crowd[p.q], fromMe: me ? kmDist(me.lat, me.lon, lat, lon) : null };
     })
   };
 }
 
-if (typeof module !== "undefined") module.exports = { roadClass, roadNetwork, nearestParking, effClass, ROAD_CLASS, CAR_LEVELS, STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };
+if (typeof module !== "undefined") module.exports = { climbProfile, roadClass, roadNetwork, nearestParking, effClass, ROAD_CLASS, CAR_LEVELS, STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };

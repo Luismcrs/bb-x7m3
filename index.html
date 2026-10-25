@@ -95,6 +95,9 @@
     <p class="hint">El estado sale de OpenStreetMap (tipo de pista, firme y estado). Cuando falta, la pista cuenta como «normal». En el mapa, toca un camino de color para valorarlo («bien», «al límite» o «no pasa»): tu valoración manda.<br>Azul: asfalto · verde: pista buena · naranja: normal · rojo: mala. Discontinuo: no llegas con tus ajustes.</p>
     <h3>Andando</h3>
     <div class="slider"><label for="walkMax">Máximo andando desde el coche</label><input type="range" id="walkMax" min="100" max="2000" step="50"><output id="walkMaxV"></output></div>
+    <div class="slider"><label for="climbMax">Desnivel máximo entre el coche y el punto</label><input type="range" id="climbMax" min="20" max="300" step="10"><output id="climbMaxV"></output></div>
+    <label class="toggle"><input type="checkbox" id="avoidCrowd"><span>Evitar donde va todo el mundo</span><small>Penaliza lo que queda cerca del asfalto, de pueblos y de zonas con muchos caminos, y exige andar un mínimo</small></label>
+    <div class="slider"><label for="minWalk">Mínimo andando desde el coche</label><input type="range" id="minWalk" min="0" max="1000" step="50"><output id="minWalkV"></output></div>
     <div class="slider"><label for="shade">Peso de las umbrías</label><input type="range" id="shade" min="0" max="2" step="0.1"><output id="shadeV"></output></div>
     <div class="slider"><label for="hollow">Peso de las vaguadas</label><input type="range" id="hollow" min="0" max="2" step="0.1"><output id="hollowV"></output></div>
     <div class="slider"><label for="minLevel">Mostrar en el mapa</label><input type="range" id="minLevel" min="1" max="3" step="1"><output id="minLevelV"></output></div>
@@ -120,7 +123,8 @@
         <li>La pendiente, la orientación y las vaguadas.</li>
       </ul>
       <p>Los <b>colores del mapa</b> son relativos: marcan el 3 %, el 10 % y el 25 % mejor del bosque del Bages en ese día. Un día malo también hay rojo, así que mira el nivel en la parte inferior.</p>
-      <p>«Buscar puntos» descarga los caminos de OpenStreetMap de la zona que ves. Con ellos aparta lo más pisado y calcula dónde dejar el coche.</p>
+      <p>«Buscar puntos» descarga los caminos de OpenStreetMap de la zona que ves. Con ellos aparta lo más pisado, calcula dónde dejar el coche según los caminos que aceptas y comprueba el desnivel en línea recta entre el coche y el punto.</p>
+      <p><b>Afluencia probable.</b> No hay datos reales de cuánta gente busca setas en cada sitio. La app la estima con lo que suele atraer a la gente: estar cerca del asfalto o del coche, cerca de pueblos o urbanizaciones, o en una zona con muchos caminos. Con «Evitar donde va todo el mundo» penaliza esas zonas y exige andar un mínimo.</p>
       <p>Datos: Meteocat (XEMA, datos abiertos de la Generalitat), Open-Meteo, Copernicus DEM, ESA WorldCover, OpenStreetMap. Es una estimación, no una garantía. Respeta los carteles, las fincas privadas y las batidas de caza.</p>
       <p id="version" class="hint"></p>
     </details>
