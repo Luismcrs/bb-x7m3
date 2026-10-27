@@ -1,6 +1,6 @@
 /* Bolets Bages · app */
 "use strict";
-const VERSION = "1.5 · 25-10-2026";
+const VERSION = "1.6 · 27-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -61,8 +61,10 @@ L.control.scale({ imperial: false, position: "bottomright" }).addTo(map);
 async function loadPixels(url) {
   const img = new Image(); img.decoding = "async"; img.src = url; await img.decode();
   const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight;
-  const x = c.getContext("2d", { willReadFrequently: true }); x.drawImage(img, 0, 0);
-  return x.getImageData(0, 0, c.width, c.height).data;
+  const x = c.getContext("2d", { willReadFrequently: true }); if (!x) throw new Error("sin memoria para el mapa");
+  x.drawImage(img, 0, 0); const d = x.getImageData(0, 0, c.width, c.height).data;
+  c.width = c.height = 0; img.src = ""; // libera la memoria del lienzo enseguida (el iPhone tiene un tope muy bajo)
+  return d;
 }
 async function loadGrid() {
   setStatus("Cargando relieve y bosque…");
@@ -76,7 +78,9 @@ async function loadGrid() {
 /* Mapa de cubiertas del ICGC a 10 m, en 12 trozos que se cargan solo cuando hacen falta */
 const lcTiles = new Map();
 function lcTile(r, c) {
-  const key = r + "_" + c; if (lcTiles.has(key)) return lcTiles.get(key);
+  const key = r + "_" + c;
+  if (lcTiles.has(key)) { const p = lcTiles.get(key); lcTiles.delete(key); lcTiles.set(key, p); return p; } // el más reciente, al final
+  while (lcTiles.size >= 6) lcTiles.delete(lcTiles.keys().next().value); // como mucho 6 trozos en memoria (~12 MB)
   const m = App.grid.lc10, p = loadPixels("data/lc/" + key + ".png").then(px => { const a = new Uint8Array(m.tileW * m.tileH); for (let i = 0, q = 0; i < a.length; i++, q += 4) a[i] = px[q]; return a; });
   p.catch(() => lcTiles.delete(key)); lcTiles.set(key, p); return p;
 }
@@ -163,6 +167,7 @@ function renderOverlay() {
   }
   x.putImageData(img, 0, 0);
   c.toBlob(b => {
+    c.width = c.height = 0;
     const url = URL.createObjectURL(b);
     if (overlay) { const old = overlay._url; overlay.setUrl(url); setTimeout(() => URL.revokeObjectURL(old), 4000); }
     else { overlay = L.imageOverlay(url, [[S, g.lon0], [N, g.lon0 + W * g.dlon]], { pane: "prob", className: "prob", opacity: App.prefs.opacity, interactive: false }); layerProb.addLayer(overlay); }
@@ -191,13 +196,42 @@ function meteoStatus() {
 
 /* ---------- Puntos con caminos reales (Overpass) ---------- */
 const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter"];
-async function overpass(q) {
-  let err;
-  for (const u of OVERPASS) {
-    try { return await fetchJSON(u, 60000, { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" } }); }
-    catch (e) { err = e; }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+/* Descarga de OpenStreetMap. Los servidores públicos limitan las consultas seguidas (responden «ocupado»):
+   si uno está ocupado o tarda, prueba el siguiente y, si todos fallan, espera un poco y lo intenta otra vez. */
+async function overpass(q, status) {
+  let err = null;
+  for (let round = 0; round < 2; round++) {
+    for (let i = 0; i < OVERPASS.length; i++) {
+      status("Descargando caminos" + (round || i ? " (servidor " + (i + 1) + " de " + OVERPASS.length + ")" : "") + "…");
+      const ac = new AbortController(), t = setTimeout(() => ac.abort(), 50000);
+      try {
+        const r = await fetch(OVERPASS[i], { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: ac.signal });
+        if (r.status === 429 || r.status === 504 || r.status === 503) { err = Object.assign(new Error("servidor ocupado"), { busy: true }); continue; }
+        if (!r.ok) { err = new Error("HTTP " + r.status); continue; }
+        const j = await r.json();
+        if (j.remark && /runtime error|timed out|out of memory|rate_limited/i.test(j.remark)) { err = Object.assign(new Error("servidor ocupado"), { busy: true }); continue; } // datos a medias
+        return j;
+      } catch (e) { err = e.name === "AbortError" ? Object.assign(new Error("el servidor tarda demasiado"), { busy: true }) : e; }
+      finally { clearTimeout(t); }
+    }
+    if (round === 0) for (let k = 15; k > 0; k--) { status("Servidores de caminos ocupados: reintento en " + k + " s…"); await sleep(1000); }
   }
   throw err;
+}
+/* Zonas ya descargadas: la actual y las 2 anteriores (las más viejas se borran para no llenar la memoria del móvil).
+   Si vuelves a buscar dentro de una de ellas, no hace falta descargar nada. */
+const zoneCache = [];
+const ZONE_MAX = 3, ZONE_WAYS_MAX = 60000;
+function cachedZone(box) {
+  const T = .002, z = zoneCache.find(z => box.n <= z.box.n + T && box.s >= z.box.s - T && box.w >= z.box.w - T && box.e <= z.box.e + T);
+  if (z) { zoneCache.splice(zoneCache.indexOf(z), 1); zoneCache.push(z); }
+  return z;
+}
+function storeZone(z) {
+  zoneCache.push(z);
+  const total = () => zoneCache.reduce((a, x) => a + x.ways.length, 0);
+  while (zoneCache.length > ZONE_MAX || (zoneCache.length > 1 && total() > ZONE_WAYS_MAX)) zoneCache.shift();
 }
 function analysisBox() {
   const b = map.getBounds(), c = map.getCenter(), g = App.grid;
@@ -210,28 +244,42 @@ function analysisBox() {
   if (n <= s || e <= w) return null;
   return { n, s, w, e };
 }
-let boxLayer = null;
+let boxLayer = null, analyzing = false;
+// Mientras se busca en otra zona, los puntos anteriores se ven apagados
+function dimSpots(on) {
+  layerSpots.eachLayer(l => { if (l.setOpacity) l.setOpacity(on ? .35 : 1); else if (l.setStyle) { if (l.options.op0 == null) l.options.op0 = l.options.opacity; l.setStyle({ opacity: on ? .25 : l.options.op0 }); } });
+}
 async function analyze() {
-  if (!App.scores) return;
+  if (!App.scores || analyzing) return;
   const box = analysisBox(); if (!box) { toast("Esa zona queda fuera del Bages"); return; }
-  const btn = $("#analyzeBtn"); btn.disabled = true; btn.textContent = "Descargando caminos…";
+  const btn = $("#analyzeBtn"), status = t => { btn.textContent = t; };
+  analyzing = true; btn.disabled = true; App.anaError = null; dimSpots(true);
   try {
-    const bb = [box.s, box.w, box.n, box.e].map(v => v.toFixed(5)).join(","), M = .02;
-    const bx = [box.s - M, box.w - M * 1.3, box.n + M, box.e + M * 1.3].map(v => v.toFixed(5)).join(",");
-    // caminos de la zona (y un margen para aparcar fuera), carreteras para llegar, y lo que no se cruza andando
-    const W2 = .009, bw = [box.s - W2, box.w - W2 * 1.3, box.n + W2, box.e + W2 * 1.3].map(v => v.toFixed(5)).join(",");
-    const q = "[out:json][timeout:60];(way[\"highway\"](" + bw + ");way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|road)\"](" + bx + ");" +
-      "way[\"railway\"~\"^(rail|narrow_gauge|light_rail|funicular|monorail|preserved|subway|tram)$\"](" + bw + ");way[\"waterway\"~\"^(river|canal)$\"](" + bw + ");way[\"barrier\"~\"^(fence|wall)$\"](" + bw + ");way[\"natural\"=\"cliff\"](" + bw + "););out body geom;" +
-      "node[\"place\"~\"^(village|hamlet|isolated_dwelling|farm|locality|neighbourhood|town)$\"][\"name\"](" + bx + ");node[\"natural\"=\"peak\"][\"name\"](" + bx + ");out body;";
-    const data = await overpass(q);
-    App.ways = { box, ways: data.elements.filter(x => x.type === "way" && x.geometry),
-      places: data.elements.filter(x => x.type === "node" && x.tags && x.tags.name).map(x => ({ lat: x.lat, lon: x.lon, n: x.tags.name, peak: x.tags.natural === "peak" })) };
-    btn.textContent = "Calculando rutas a pie…";
+    let z = cachedZone(box);
+    if (!z) {
+      const bb = [box.s, box.w, box.n, box.e].map(v => v.toFixed(5)).join(","), M = .02;
+      const bx = [box.s - M, box.w - M * 1.3, box.n + M, box.e + M * 1.3].map(v => v.toFixed(5)).join(",");
+      // caminos de la zona (y un margen para aparcar fuera), carreteras para llegar, y lo que no se cruza andando.
+      // Se dejan fuera aceras, pasos de peatones y obras: en los pueblos pesan mucho y no sirven para buscar setas.
+      const W2 = .009, bw = [box.s - W2, box.w - W2 * 1.3, box.n + W2, box.e + W2 * 1.3].map(v => v.toFixed(5)).join(",");
+      const HW = "way[\"highway\"][\"highway\"!~\"^(proposed|construction|platform|corridor|elevator|bus_stop|raceway|abandoned|razed|services|rest_area)$\"][\"footway\"!~\"^(sidewalk|crossing)$\"][\"area\"!=\"yes\"]";
+      const q = "[out:json][timeout:45];(" + HW + "(" + bw + ");way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|road)\"][\"service\"!~\"^(parking_aisle|driveway)$\"](" + bx + ");" +
+        "way[\"railway\"~\"^(rail|narrow_gauge|light_rail|funicular|monorail|preserved|subway|tram)$\"](" + bw + ");way[\"waterway\"~\"^(river|canal)$\"](" + bw + ");way[\"barrier\"~\"^(fence|wall)$\"](" + bw + ");way[\"natural\"=\"cliff\"](" + bw + "););out body geom qt;" +
+        "node[\"place\"~\"^(village|hamlet|isolated_dwelling|farm|locality|neighbourhood|town)$\"][\"name\"](" + bx + ");node[\"natural\"=\"peak\"][\"name\"](" + bx + ");out body qt;";
+      const data = await overpass(q, status);
+      z = { box, ways: data.elements.filter(x => x.type === "way" && x.geometry),
+        places: data.elements.filter(x => x.type === "node" && x.tags && x.tags.name).map(x => ({ lat: x.lat, lon: x.lon, n: x.tags.name, peak: x.tags.natural === "peak" })) };
+      storeZone(z);
+    }
+    App.ways = { box, ways: z.ways, places: z.places };
+    status("Calculando rutas a pie…");
     await runAnalysis(true);
   } catch (e) {
     console.error(e);
-    toast("No he podido descargar los caminos de OpenStreetMap. Prueba otra vez en un momento.");
-  } finally { btn.disabled = false; btn.textContent = "Buscar los mejores puntos en lo que veo"; }
+    App.anaError = e.busy ? "Los servidores de OpenStreetMap están saturados y no he podido descargar los caminos de esta zona." : "No he podido descargar los caminos de esta zona (" + (navigator.onLine === false ? "sin conexión" : e.message) + ").";
+    dimSpots(false); renderSpotList(); openSheet("cerca");
+    toast(App.anaError + " Prueba otra vez en un minuto.", 6000);
+  } finally { analyzing = false; btn.disabled = false; btn.textContent = "Buscar los mejores puntos en lo que veo"; }
 }
 let anaRun = 0;
 function runAnalysis(fit) { return runAnalysisAsync(fit).catch(e => { console.error(e); toast("No he podido calcular las rutas a pie: " + e.message); }); }
@@ -246,7 +294,7 @@ async function runAnalysisAsync(fit) {
   if (!res.net.hasPaved) toast("No encuentro carretera asfaltada cerca de esta zona: mueve el mapa o amplía la búsqueda");
   if (boxLayer) map.removeLayer(boxLayer);
   boxLayer = L.rectangle([[box.s, box.w], [box.n, box.e]], { color: "#1f2a22", weight: 1, dashArray: "4 6", fill: false, interactive: false }).addTo(map);
-  App.analysis = { box, spots: res.spots, when: new Date().toISOString(), sp: App.prefs.sp };
+  App.analysis = { box, spots: res.spots, when: new Date().toISOString(), sp: App.prefs.sp }; App.anaError = null;
   LS.set("bb.lastAnalysis", App.analysis);
   drawSpots(); renderSpotList();
   if (fit) {
@@ -254,14 +302,14 @@ async function runAnalysisAsync(fit) {
     else { openSheet("cerca"); }
   }
 }
-const ROAD_COL = ["#1a5fb4", "#2e8b57", "#e08a00", "#c0392b"];
+const ROAD_COL = ["#1a5fb4", "#2e8b57", "#e08a00", "#c0392b"], roadRenderer = L.canvas({ padding: .3, tolerance: 8 });
 function drawRoads(ways, net) {
   layerCar.clearLayers(); const ok = new Set(net.reach.map(s => s.way)), lvl = App.prefs.carLevel;
   for (const wy of ways) {
     if (!wy.tags || !wy.tags.highway) continue;
-    const c = wy._cls; if (c == null || c < 0 || !wy.geometry) { if (c === -1 && App.ratings[wy.id] === "no") L.polyline(wy.geometry.map(p => [p.lat, p.lon]), { color: "#666", weight: 3, dashArray: "2 6" }).on("click", e => ratePopup(wy, e.latlng)).addTo(layerCar); continue; }
+    const c = wy._cls; if (c == null || c < 0 || !wy.geometry) { if (c === -1 && App.ratings[wy.id] === "no") L.polyline(wy.geometry.map(p => [p.lat, p.lon]), { color: "#666", weight: 3, dashArray: "2 6", renderer: roadRenderer }).on("click", e => ratePopup(wy, e.latlng)).addTo(layerCar); continue; }
     const reach = ok.has(wy.id);
-    L.polyline(wy.geometry.map(p => [p.lat, p.lon]), { color: ROAD_COL[c], weight: reach ? 4 : 3, opacity: reach ? .85 : .5, dashArray: reach ? null : "5 7" })
+    L.polyline(wy.geometry.map(p => [p.lat, p.lon]), { color: ROAD_COL[c], weight: reach ? 4 : 3, opacity: reach ? .85 : .5, dashArray: reach ? null : "5 7", renderer: roadRenderer })
       .on("click", e => { L.DomEvent.stop(e); ratePopup(wy, e.latlng); }).addTo(layerCar);
   }
 }
@@ -328,6 +376,11 @@ function spotLine(s) {
 }
 function renderSpotList() {
   const ol = $("#spots"); ol.innerHTML = ""; const A = App.analysis;
+  if (App.anaError) {
+    const li = document.createElement("li"); li.className = "hint warn";
+    li.textContent = App.anaError + (A && A.spots.length ? " Los puntos de abajo son de la búsqueda anterior." : " ");
+    li.append(mkBtn("Reintentar", analyze, "small")); ol.append(li);
+  }
   if (!A) { ol.innerHTML = '<li class="hint">Todavía no hay puntos. Acerca el mapa a una zona y pulsa el botón.</li>'; return; }
   if (!A.spots.length) { ol.innerHTML = '<li class="hint">Con tus ajustes de coche y de distancia andando no llegas a ninguna zona buena aquí. Prueba a aceptar más camino de tierra, a andar más o a mover el mapa.</li>'; return; }
   if (A.sp !== App.prefs.sp) ol.insertAdjacentHTML("beforeend", '<li class="hint">Estos puntos son de otra especie. Vuelve a buscar.</li>');
