@@ -1,6 +1,6 @@
 /* Bolets Bages y Berguedà · app */
 "use strict";
-const VERSION = "1.10 · 30-10-2026";
+const VERSION = "1.11 · 30-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -314,10 +314,14 @@ let boxLayer = null, analyzing = false;
 function dimSpots(on) {
   layerSpots.eachLayer(l => { if (l.setOpacity) l.setOpacity(on ? .35 : 1); else if (l.setStyle) { if (l.options.op0 == null) l.options.op0 = l.options.opacity; l.setStyle({ opacity: on ? .25 : l.options.op0 }); } });
 }
-async function analyze() {
+async function analyze(opt) {
   if (!App.scores || analyzing) return;
-  const box = analysisBox(); if (!box) { toast("Esa zona queda fuera del Bages y el Berguedà"); return; }
-  const btn = $("#analyzeBtn"), status = t => { btn.textContent = t; };
+  opt = opt && opt.box ? opt : {};
+  const box = opt.box || analysisBox(); if (!box) { toast("Esa zona queda fuera del Bages y el Berguedà"); return; }
+  App.anaCtx = { zone: opt.zone || null, day: App.date ? dayKey(App.date) : null };
+  const btn = $("#analyzeBtn"), hd = $("#spotsHead"), status = t => { btn.textContent = t; hd.textContent = (opt.zone ? opt.zone + ": " : "") + t; hd.hidden = false; };
+  if (opt.zone) $("#spots").innerHTML = "";
+  status("Buscando los mejores puntos…");
   analyzing = true; btn.disabled = true; App.anaError = null; dimSpots(true);
   try {
     let z = cachedZone(box) || await offlineZone(box);
@@ -339,17 +343,17 @@ async function analyze() {
     }
     App.ways = { box, ways: z.ways, places: z.places };
     status("Calculando rutas a pie…");
-    await runAnalysis(true);
+    await runAnalysis(true, !!opt.zone);
   } catch (e) {
     console.error(e);
     App.anaError = e.offline ? "Sin cobertura, y esta zona no está guardada. Las zonas guardadas se ven en Ajustes." : e.busy ? "Los servidores de OpenStreetMap están saturados y no he podido descargar los caminos de esta zona." : "No he podido descargar los caminos de esta zona (" + (navigator.onLine === false ? "sin conexión" : e.message) + ").";
-    dimSpots(false); renderSpotList(); openSheet("cerca");
+    dimSpots(false); renderSpotList(); openSheet("puntos");
     toast(App.anaError + " Prueba otra vez en un minuto.", 6000);
   } finally { analyzing = false; btn.disabled = false; btn.textContent = "Buscar los mejores puntos en lo que veo"; }
 }
 let anaRun = 0;
-function runAnalysis(fit) { return runAnalysisAsync(fit).catch(e => { console.error(e); toast("No he podido calcular las rutas a pie: " + e.message); }); }
-async function runAnalysisAsync(fit) {
+function runAnalysis(fit, fitMap) { return runAnalysisAsync(fit, fitMap).catch(e => { console.error(e); toast("No he podido calcular las rutas a pie: " + e.message); }); }
+async function runAnalysisAsync(fit, fitMap) {
   const { box, ways } = App.ways, run = ++anaRun;
   seedRatings(ways);
   const lc = await lcWindowFor(box); if (run !== anaRun) return; // se ha pedido otro cálculo mientras tanto
@@ -360,12 +364,14 @@ async function runAnalysisAsync(fit) {
   if (!res.net.hasPaved) toast("No encuentro carretera asfaltada cerca de esta zona: mueve el mapa o amplía la búsqueda");
   if (boxLayer) map.removeLayer(boxLayer);
   boxLayer = L.rectangle([[box.s, box.w], [box.n, box.e]], { color: "#1f2a22", weight: 1, dashArray: "4 6", fill: false, interactive: false }).addTo(map);
-  App.analysis = { box, spots: res.spots, when: new Date().toISOString(), sp: App.prefs.sp }; App.anaError = null;
+  const ctx = App.anaCtx || {};
+  App.analysis = { box, spots: res.spots, when: new Date().toISOString(), sp: App.prefs.sp, day: App.date ? dayKey(App.date) : dayKey(new Date()), zone: ctx.zone || (App.analysis && boxIn(box, App.analysis.box, .01) ? App.analysis.zone : null) }; App.anaError = null;
   LS.set("bb.lastAnalysis", App.analysis);
   drawSpots(); renderSpotList(); updateSaveBtn();
   if (fit) {
     if (!res.spots.length) toast("No hay zonas buenas que cumplan tus ajustes aquí. Prueba a subir la distancia andando o a mover el mapa.");
-    else { openSheet("cerca"); }
+    openSheet("puntos");
+    if (fitMap && res.spots.length) fitSpots();
   }
 }
 const ROAD_COL = ["#1a5fb4", "#2e8b57", "#e08a00", "#c0392b"], roadRenderer = L.canvas({ padding: .3, tolerance: 8 });
@@ -442,6 +448,11 @@ function spotLine(s) {
 }
 function renderSpotList() {
   const ol = $("#spots"); ol.innerHTML = ""; const A = App.analysis;
+  const hd = $("#spotsHead");
+  if (hd) {
+    if (A && A.spots.length) { const dd = A.day ? parseDay(A.day) : new Date(); hd.textContent = "Mejores puntos" + (A.zone ? " de " + A.zone : " de esta zona") + " para " + dayName(dd) + ", de mejor a peor:"; hd.hidden = false; }
+    else hd.hidden = true;
+  }
   if (App.anaError) {
     const li = document.createElement("li"); li.className = "hint warn";
     li.textContent = App.anaError + (A && A.spots.length ? " Los puntos de abajo son de la búsqueda anterior." : " ");
@@ -588,7 +599,7 @@ async function deleteOffZone(id) {
 }
 function renderOffZones() {
   const ol = $("#offZones"); if (!ol) return; ol.innerHTML = ""; const idx = offIndex();
-  if (!idx.length) { ol.innerHTML = '<li class="hint">Ninguna. Después de «Buscar puntos», en «Cerca», pulsa «Guardar esta zona».</li>'; return; }
+  if (!idx.length) { ol.innerHTML = '<li class="hint">Ninguna. Después de buscar puntos, en «Puntos», pulsa «Guardar esta zona».</li>'; return; }
   for (const z of idx) {
     const li = document.createElement("li"); const d = new Date(z.t), old = Date.now() - z.t > 45 * 86400e3;
     li.innerHTML = '<span class="tt"><b>' + esc(z.n) + "</b><br><small>" + d.toLocaleDateString("es-ES", { day: "numeric", month: "short" }) + " · " + fmt(z.mb, 1) + " MB" + (old ? " · caminos antiguos: vuelve a guardarla" : "") + "</small></span>";
@@ -919,14 +930,24 @@ async function driveTimes(zs, sel) {
     if (App.plan === P && P.sel === sel) renderPlan();
   } catch (e) { need.forEach(z => P.drive[z.id + "@" + sel] = estDrive(z)); }
 }
+// Encuadra los puntos (y donde aparcar) dejando a la vista la parte del mapa que no tapa el panel
+function fitSpots() {
+  const A = App.analysis; if (!A || !A.spots.length) return;
+  const pts = A.spots.flatMap(s => s.park ? [[s.lat, s.lon], [s.park.lat, s.park.lon]] : [[s.lat, s.lon]]);
+  const sh = window.innerWidth >= 760 ? 0 : sheet.getBoundingClientRect().height, sw = window.innerWidth >= 760 ? 420 : 0;
+  map.fitBounds(L.latLngBounds(pts).pad(.05), { paddingTopLeft: [sw + 20, 70], paddingBottomRight: [50, sh + 20], maxZoom: 15 });
+}
+/* «Ver zona» en Planear: pone el día elegido, busca los mejores puntos de la zona (unos 5 × 5 km alrededor de su
+   mejor sitio) y los enseña por orden en «Puntos». */
 function openPlanZone(z, date) {
   layerPlan.clearLayers();
   const changed = (App.date ? dayKey(App.date) : dayKey(new Date())) !== dayKey(date);
   App.date = isToday(date) ? null : date;
   if (changed) { summarize(); recompute(); }
-  collapseSheet();
-  map.flyTo([z.lat, z.lon], 14, { duration: 1.2 });
-  map.once("moveend", () => toast("Zona de " + z.n + (z.place ? " (" + z.place + ")" : "") + ". Si quieres puntos concretos, abre «Cerca» y pulsa «Buscar puntos».", 5000));
+  map.flyTo([z.lat, z.lon], 13, { duration: .8 });
+  const box = { n: z.lat + .0225, s: z.lat - .0225, w: z.lon - .03, e: z.lon + .03 };
+  openSheet("puntos");
+  analyze({ box, zone: z.n });
 }
 $("#homeHere").onclick = () => {
   if (!App.me) { startGPS(false); toast("Buscando tu posición… vuelve a pulsar cuando aparezca el punto azul"); return; }

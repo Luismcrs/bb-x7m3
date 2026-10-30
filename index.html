@@ -38,7 +38,7 @@
   <div class="grab" id="grab" aria-hidden="true"></div>
   <nav class="tabs" role="tablist">
     <button role="tab" data-tab="plan" aria-selected="true">Planear</button>
-    <button role="tab" data-tab="cerca" aria-selected="false">Cerca</button>
+    <button role="tab" data-tab="puntos" aria-selected="false">Puntos</button>
     <button role="tab" data-tab="dias" aria-selected="false">Días</button>
     <button role="tab" data-tab="diario" aria-selected="false">Diario</button>
     <button role="tab" data-tab="ajustes" aria-selected="false">Ajustes</button>
@@ -53,11 +53,12 @@
     <p class="hint"><span id="planFrom"></span> <button id="homeHere" class="linkbtn" type="button">Usar mi posición como casa</button></p>
   </div>
 
-  <div class="panel" id="p-cerca" role="tabpanel" hidden>
-    <button id="analyzeBtn" class="btn primary wide" type="button">Buscar los mejores puntos en lo que veo</button>
-    <p class="hint" id="analyzeHint">Usa los caminos reales de OpenStreetMap y el mapa de bosque del ICGC: busca dónde aparcar con tu coche y traza la ruta a pie hasta bosque de verdad, sin cruzar vías de tren, ríos, autovías ni vallas. Acerca el mapa a la zona que te interese (unos 5 km).</p>
-    <button id="saveZone" class="btn wide" type="button" hidden>Guardar esta zona para usarla sin cobertura</button>
+  <div class="panel" id="p-puntos" role="tabpanel" hidden>
+    <p id="spotsHead" class="fc-text" hidden></p>
     <ol id="spots" class="spots"></ol>
+    <button id="saveZone" class="btn wide" type="button" hidden>Guardar esta zona para usarla sin cobertura</button>
+    <button id="analyzeBtn" class="btn primary wide" type="button">Buscar los mejores puntos en lo que veo</button>
+    <p class="hint" id="analyzeHint">Usa los caminos reales de OpenStreetMap y el mapa de bosque del ICGC: busca dónde aparcar con tu coche y traza la ruta a pie hasta bosque de verdad, sin cruzar vías de tren, ríos, autovías ni vallas. Para otra zona, acerca el mapa (unos 5 km) y pulsa el botón. Desde «Planear», «Ver zona» lo hace sola para el día elegido.</p>
   </div>
 
   <div class="panel" id="p-dias" role="tabpanel" hidden>
