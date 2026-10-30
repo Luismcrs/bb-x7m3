@@ -1,6 +1,6 @@
 /* Bolets Bages y Berguedà · app */
 "use strict";
-const VERSION = "1.8 · 30-10-2026";
+const VERSION = "1.9 · 30-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -40,8 +40,8 @@ const ICGC = L.TileLayer.extend({
   }
 });
 const bases = {
-  "Topográfico (ICGC)": new ICGC("", { layer: "topografic", maxNativeZoom: 19, maxZoom: 19, attribution: "© ICGC" }),
-  "Ortofoto (ICGC)": new ICGC("", { layer: "orto", maxNativeZoom: 19, maxZoom: 19, attribution: "© ICGC" }),
+  "Topográfico (ICGC)": new ICGC("", { layer: "topografic", maxNativeZoom: 19, maxZoom: 19, crossOrigin: true, attribution: "© ICGC" }),
+  "Ortofoto (ICGC)": new ICGC("", { layer: "orto", maxNativeZoom: 19, maxZoom: 19, crossOrigin: true, attribution: "© ICGC" }),
   "OpenTopoMap": L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", { maxNativeZoom: 17, maxZoom: 19, subdomains: "abc", attribution: "© OpenStreetMap, SRTM · OpenTopoMap (CC-BY-SA)" }),
   "Satélite (Esri)": L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 18, maxZoom: 19, attribution: "© Esri, Maxar, Earthstar Geographics" }),
   "OpenStreetMap": L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxNativeZoom: 19, maxZoom: 19, attribution: "© OpenStreetMap" })
@@ -506,6 +506,25 @@ function nearestOnSegmentsApp(lat, lon, segs) {
   return best;
 }
 
+/* Guarda en segundo plano el resto de datos (el mapa de bosque de 10 m), para poder usar la app sin cobertura */
+async function warmData() {
+  if (!App.grid || navigator.onLine === false || !("caches" in window)) return;
+  const m = App.grid.lc10; for (const [r, c] of m.tiles || []) { try { await fetch("data/lc/" + r + "_" + c + ".png"); } catch (e) { return; } await new Promise(z => setTimeout(z, 300)); }
+}
+/* Actualizar a mano: busca versión nueva, o reinstala la app conservando el diario, los ajustes y las zonas guardadas */
+async function checkUpdate() {
+  const reg = App.swReg || (navigator.serviceWorker && await navigator.serviceWorker.getRegistration());
+  if (!reg) { toast("Este navegador no permite actualizar la app así: recarga la página"); return; }
+  toast("Buscando versión nueva…"); await reg.update().catch(() => { });
+  setTimeout(() => { if (!reg.installing && !reg.waiting) toast("Tienes la última versión (" + VERSION + ")"); }, 4000);
+}
+async function reinstallApp() {
+  toast("Reinstalando la app…", 4000);
+  try { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch (e) { }
+  try { for (const k of await caches.keys()) if (k !== "bb-offline") await caches.delete(k); } catch (e) { }
+  setTimeout(() => location.reload(), 600);
+}
+
 /* ---------- Zonas guardadas para usar sin cobertura ----------
    Se guardan en el móvil: los caminos de OpenStreetMap de la zona (para buscar puntos y rutas) y el mapa
    topográfico del ICGC (zooms 13 a 16, con margen; sin conexión se amplía el 16). Las teselas se piden al ICGC,
@@ -547,7 +566,7 @@ async function saveZoneOffline() {
         try {
           if (await c.match(u, { ignoreVary: true })) { done++; continue; }
           const seen = await caches.match(u, { ignoreVary: true }); // ya visto en el mapa: se copia tal cual
-          if (seen) { await c.put(u, seen); bytes += seen.type === "opaque" ? 60000 : (+seen.headers.get("content-length") || 60000); done++; continue; }
+          if (seen && seen.type !== "opaque") { const bl = await seen.blob(); bytes += bl.size; await c.put(u, new Response(bl, { headers: { "Content-Type": bl.type || "image/png" } })); done++; continue; }
           const r = await fetch(u, { mode: "cors" }); if (!r.ok) { fail++; continue; }
           const bl = await r.blob(); bytes += bl.size; await c.put(u, new Response(bl, { headers: { "Content-Type": bl.type || "image/png" } })); done++;
         } catch (e) { fail++; }
@@ -973,11 +992,13 @@ document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
 $("#grab").onclick = () => sheet.classList.contains("collapsed") ? openSheet(document.querySelector('.tabs [aria-selected="true"]').dataset.tab) : collapseSheet();
 $("#analyzeBtn").onclick = analyze;
 $("#saveZone").onclick = saveZoneOffline;
+$("#checkUpdate").onclick = checkUpdate;
+$("#reinstall").onclick = () => { const b = $("#reinstall"); if (b.dataset.arm) reinstallApp(); else { b.dataset.arm = 1; b.textContent = "Toca otra vez para reinstalar"; setTimeout(() => { delete b.dataset.arm; b.textContent = "Reinstalar la app"; }, 4000); } };
 
 /* ---------- Arranque ---------- */
 window.addEventListener("error", e => console.warn(e.message));
 (async function init() {
-  $("#version").textContent = "Versión " + VERSION;
+  $("#version").textContent = "Versión " + VERSION; $("#appVersion").textContent = "Versión " + VERSION;
   $("#spName").textContent = SPECIES[App.prefs.sp].n;
   bindPrefs(); renderDiary(); renderSpotList(); renderOffZones();
   if (LS.get("bb.gpsOk", false)) startGPS(false);
@@ -989,7 +1010,13 @@ window.addEventListener("error", e => console.warn(e.message));
   } catch (e) { console.error(e); setStatus("Error al cargar los datos: " + e.message, "err"); }
   if ("serviceWorker" in navigator) {
     const hadController = !!navigator.serviceWorker.controller;
-    navigator.serviceWorker.register("sw.js").catch(() => { });
+    navigator.serviceWorker.register("sw.js").then(reg => {
+      App.swReg = reg;
+      reg.addEventListener("updatefound", () => { if (hadController) toast("Descargando la versión nueva de la app…", 8000); });
+      // cada vez que vuelves a la app, mira si hay versión nueva
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) reg.update().catch(() => { }); });
+    }).catch(() => { });
     let reloading = false; navigator.serviceWorker.addEventListener("controllerchange", () => { if (reloading || !hadController) return; reloading = true; toast("App actualizada", 2000); setTimeout(() => location.reload(), 800); });
+    setTimeout(warmData, 20000);
   }
 })();
