@@ -2,7 +2,7 @@
    La instalación solo guarda el código (pocos cientos de KB), así se actualiza rápido y no falla por falta de
    espacio. Los datos (relieve, bosque, pinos…) se guardan la primera vez que la app los pide y se renuevan
    con cada versión. */
-const V = "bb-v13";
+const V = "bb-v14";
 const SHELL = ["./", "index.html", "app.css", "app.js", "model.js", "manifest.webmanifest", "vendor/leaflet.js", "vendor/leaflet.css",
   "vendor/images/layers.png", "vendor/images/layers-2x.png", "vendor/images/marker-icon.png", "vendor/images/marker-shadow.png",
   "icons/icon-192.png", "icons/icon-512.png", "data/meta.json", "data/meteo-fallback.json", "data/munis.json"];

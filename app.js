@@ -1,6 +1,6 @@
 /* Bolets Bages y Berguedà · app */
 "use strict";
-const VERSION = "1.12 · 30-10-2026";
+const VERSION = "1.13 · 30-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -269,14 +269,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let osmIndex = null;
 async function staticZone(box, status) {
   if (!osmIndex) { const r = await fetch("data/osm/index.json", { cache: "no-cache" }); if (!r.ok) throw new Error("sin teselas"); osmIndex = await r.json(); }
-  const I = osmIndex, M = .02, need = [], have = new Set(I.tiles.map(t => t.join("_")));
+  const I = osmIndex, M = .02, need = [], have = new Map(I.tiles.map(t => [t[0] + "_" + t[1], t[2] || I.generated]));
   const bx = { s: box.s - M, n: box.n + M, w: box.w - M * 1.3, e: box.e + M * 1.3 };
   for (let r = Math.max(0, Math.floor((bx.s - I.s) / I.dlat)); r <= Math.min(I.rows - 1, Math.floor((bx.n - I.s) / I.dlat)); r++)
     for (let c = Math.max(0, Math.floor((bx.w - I.w) / I.dlon)); c <= Math.min(I.cols - 1, Math.floor((bx.e - I.w) / I.dlon)); c++) if (have.has(r + "_" + c)) need.push(r + "_" + c);
   if (!need.length) throw new Error("zona sin teselas");
   const ways = new Map(), places = []; let done = 0;
   await Promise.all(need.map(async k => {
-    const r = await fetch("data/osm/" + k + ".json?v=" + I.generated); if (!r.ok) throw new Error("tesela " + k);
+    const r = await fetch("data/osm/" + k + ".json?v=" + have.get(k)); if (!r.ok) throw new Error("tesela " + k);
     const t = await r.json();
     for (const [id, tags, nodes, g] of t.w) if (!ways.has(id)) { const geometry = []; for (let i = 0; i < g.length; i += 2) geometry.push({ lat: g[i], lon: g[i + 1] }); ways.set(id, { type: "way", id, tags, nodes, geometry }); }
     for (const [lat, lon, n, peak] of t.p) places.push({ lat, lon, n, peak: !!peak });

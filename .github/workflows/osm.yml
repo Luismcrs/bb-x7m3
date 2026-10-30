@@ -23,14 +23,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Descargar caminos por teselas
-        run: python tools/osm_tiles.py
-      - name: Publicar en main y gh-pages
+      - name: Descargar caminos por teselas (publica cada 15)
+        env:
+          COMMIT_EVERY: "15"
+          MAX_MIN: "150"
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/osm
-          git commit -m "Caminos de OpenStreetMap actualizados" || exit 0
-          git pull --rebase origin main
-          git push origin HEAD:main
-          git push --force origin HEAD:gh-pages
+          python tools/osm_tiles.py
