@@ -1,6 +1,6 @@
 /* Bolets Bages y Berguedà · app */
 "use strict";
-const VERSION = "1.13 · 30-10-2026";
+const VERSION = "1.14 · 30-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -272,8 +272,9 @@ async function staticZone(box, status) {
   const I = osmIndex, M = .02, need = [], have = new Map(I.tiles.map(t => [t[0] + "_" + t[1], t[2] || I.generated]));
   const bx = { s: box.s - M, n: box.n + M, w: box.w - M * 1.3, e: box.e + M * 1.3 };
   for (let r = Math.max(0, Math.floor((bx.s - I.s) / I.dlat)); r <= Math.min(I.rows - 1, Math.floor((bx.n - I.s) / I.dlat)); r++)
-    for (let c = Math.max(0, Math.floor((bx.w - I.w) / I.dlon)); c <= Math.min(I.cols - 1, Math.floor((bx.e - I.w) / I.dlon)); c++) if (have.has(r + "_" + c)) need.push(r + "_" + c);
-  if (!need.length) throw new Error("zona sin teselas");
+    for (let c = Math.max(0, Math.floor((bx.w - I.w) / I.dlon)); c <= Math.min(I.cols - 1, Math.floor((bx.e - I.w) / I.dlon)); c++) need.push(r + "_" + c);
+  // si falta alguna tesela de la zona (aún no generada), mejor preguntar a Overpass que buscar con caminos a medias
+  if (!need.length || need.some(k => !have.has(k))) { osmIndex = null; throw new Error("faltan teselas"); }
   const ways = new Map(), places = []; let done = 0;
   await Promise.all(need.map(async k => {
     const r = await fetch("data/osm/" + k + ".json?v=" + have.get(k)); if (!r.ok) throw new Error("tesela " + k);
