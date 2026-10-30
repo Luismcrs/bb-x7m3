@@ -1,6 +1,6 @@
 /* Bolets Bages y Berguedà · app */
 "use strict";
-const VERSION = "1.11 · 30-10-2026";
+const VERSION = "1.12 · 30-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -47,6 +47,8 @@ const bases = {
   "OpenStreetMap": L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxNativeZoom: 19, maxZoom: 19, attribution: "© OpenStreetMap" })
 };
 let baseName = LS.get("bb.base", "Topográfico (ICGC)"); if (!bases[baseName]) baseName = "Topográfico (ICGC)";
+// el mapa del ICGC no cargaba hasta la versión 1.8 y muchas veces se quedó OpenTopoMap: se vuelve una vez al del ICGC
+if (!LS.get("bb.baseFix", false)) { if (baseName === "OpenTopoMap") baseName = "Topográfico (ICGC)"; LS.set("bb.base", baseName); LS.set("bb.baseFix", true); }
 bases[baseName].addTo(map);
 // Si el mapa del ICGC falla al arrancar, se cambia solo a OpenTopoMap
 let tileErr = 0, tileOk = 0; bases[baseName].on("tileload", () => tileOk++);
@@ -262,6 +264,26 @@ function meteoStatus() {
 /* ---------- Puntos con caminos reales (Overpass) ---------- */
 const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter"];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+/* Caminos de OpenStreetMap ya preparados en teselas (data/osm/, se renuevan cada mes con GitHub Actions):
+   la búsqueda no depende de los servidores públicos de Overpass, que se saturan a menudo. */
+let osmIndex = null;
+async function staticZone(box, status) {
+  if (!osmIndex) { const r = await fetch("data/osm/index.json", { cache: "no-cache" }); if (!r.ok) throw new Error("sin teselas"); osmIndex = await r.json(); }
+  const I = osmIndex, M = .02, need = [], have = new Set(I.tiles.map(t => t.join("_")));
+  const bx = { s: box.s - M, n: box.n + M, w: box.w - M * 1.3, e: box.e + M * 1.3 };
+  for (let r = Math.max(0, Math.floor((bx.s - I.s) / I.dlat)); r <= Math.min(I.rows - 1, Math.floor((bx.n - I.s) / I.dlat)); r++)
+    for (let c = Math.max(0, Math.floor((bx.w - I.w) / I.dlon)); c <= Math.min(I.cols - 1, Math.floor((bx.e - I.w) / I.dlon)); c++) if (have.has(r + "_" + c)) need.push(r + "_" + c);
+  if (!need.length) throw new Error("zona sin teselas");
+  const ways = new Map(), places = []; let done = 0;
+  await Promise.all(need.map(async k => {
+    const r = await fetch("data/osm/" + k + ".json?v=" + I.generated); if (!r.ok) throw new Error("tesela " + k);
+    const t = await r.json();
+    for (const [id, tags, nodes, g] of t.w) if (!ways.has(id)) { const geometry = []; for (let i = 0; i < g.length; i += 2) geometry.push({ lat: g[i], lon: g[i + 1] }); ways.set(id, { type: "way", id, tags, nodes, geometry }); }
+    for (const [lat, lon, n, peak] of t.p) places.push({ lat, lon, n, peak: !!peak });
+    status("Cargando caminos… " + (++done) + "/" + need.length);
+  }));
+  const z = { box, ways: [...ways.values()], places, osmDate: I.generated }; storeZone(z); return z;
+}
 /* Descarga de OpenStreetMap. Los servidores públicos limitan las consultas seguidas (responden «ocupado»):
    si uno está ocupado o tarda, prueba el siguiente y, si todos fallan, espera un poco y lo intenta otra vez. */
 async function overpass(q, status) {
@@ -325,6 +347,7 @@ async function analyze(opt) {
   analyzing = true; btn.disabled = true; App.anaError = null; dimSpots(true);
   try {
     let z = cachedZone(box) || await offlineZone(box);
+    if (!z) z = await staticZone(box, status).catch(e => { console.warn("teselas OSM", e); return null; });
     if (!z && navigator.onLine === false) throw Object.assign(new Error("sin conexión"), { offline: true });
     if (!z) {
       const bb = [box.s, box.w, box.n, box.e].map(v => v.toFixed(5)).join(","), M = .02;
@@ -333,7 +356,7 @@ async function analyze(opt) {
       // Se dejan fuera aceras, pasos de peatones y obras: en los pueblos pesan mucho y no sirven para buscar setas.
       const W2 = .009, bw = [box.s - W2, box.w - W2 * 1.3, box.n + W2, box.e + W2 * 1.3].map(v => v.toFixed(5)).join(",");
       const HW = "way[\"highway\"][\"highway\"!~\"^(proposed|construction|platform|corridor|elevator|bus_stop|raceway|abandoned|razed|services|rest_area)$\"][\"footway\"!~\"^(sidewalk|crossing)$\"][\"area\"!=\"yes\"]";
-      const q = "[out:json][timeout:45];(" + HW + "(" + bw + ");way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|road)\"][\"service\"!~\"^(parking_aisle|driveway)$\"](" + bx + ");" +
+      const q = "[out:json][timeout:30];(" + HW + "(" + bw + ");way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|track|road)\"][\"service\"!~\"^(parking_aisle|driveway)$\"](" + bx + ");" +
         "way[\"railway\"~\"^(rail|narrow_gauge|light_rail|funicular|monorail|preserved|subway|tram)$\"](" + bw + ");way[\"waterway\"~\"^(river|canal)$\"](" + bw + ");way[\"barrier\"~\"^(fence|wall)$\"](" + bw + ");way[\"natural\"=\"cliff\"](" + bw + "););out body geom qt;" +
         "node[\"place\"~\"^(village|hamlet|isolated_dwelling|farm|locality|neighbourhood|town)$\"][\"name\"](" + bx + ");node[\"natural\"=\"peak\"][\"name\"](" + bx + ");out body qt;";
       const data = await overpass(q, status);

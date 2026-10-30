@@ -2,7 +2,7 @@
    La instalación solo guarda el código (pocos cientos de KB), así se actualiza rápido y no falla por falta de
    espacio. Los datos (relieve, bosque, pinos…) se guardan la primera vez que la app los pide y se renuevan
    con cada versión. */
-const V = "bb-v12";
+const V = "bb-v13";
 const SHELL = ["./", "index.html", "app.css", "app.js", "model.js", "manifest.webmanifest", "vendor/leaflet.js", "vendor/leaflet.css",
   "vendor/images/layers.png", "vendor/images/layers-2x.png", "vendor/images/marker-icon.png", "vendor/images/marker-shadow.png",
   "icons/icon-192.png", "icons/icon-512.png", "data/meta.json", "data/meteo-fallback.json", "data/munis.json"];
@@ -33,6 +33,10 @@ self.addEventListener("fetch", e => {
     return;
   }
   if (url.origin !== location.origin) return; // APIs (meteo, caminos): siempre a la red
+  if (url.pathname.endsWith("/data/osm/index.json")) { // índice de caminos: primero la red (cambia cada mes)
+    e.respondWith(caches.open(V).then(async c => { try { const r = await fetch(req); if (r.ok) c.put(req, r.clone()); return r; } catch (err) { return (await c.match(req, { ignoreSearch: true })) || Response.error(); } }));
+    return;
+  }
   if (url.pathname.includes("/data/") || url.pathname.includes("/vendor/") || url.pathname.includes("/icons/")) {
     e.respondWith(caches.open(V).then(async c => {
       const hit = await c.match(req); if (hit) return hit;
