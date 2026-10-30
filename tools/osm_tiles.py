@@ -7,7 +7,7 @@ S0, N0, W0, E0 = 41.55, 42.37, 1.50, 2.12          # zona de la app y un margen 
 DLAT, DLON = 0.06, 0.08
 ROWS, COLS = math.ceil(round((N0 - S0) / DLAT, 6)), math.ceil(round((E0 - W0) / DLON, 6))
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'osm')
-SERVERS = ['https://overpass.kumi.systems/api/interpreter', 'https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter']
+SERVERS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter']
 KEEP = {'highway', 'tracktype', 'surface', 'smoothness', 'access', 'motor_vehicle', 'motorcar', 'vehicle', '4wd_only', 'foot', 'bridge',
         'tunnel', 'ford', 'railway', 'waterway', 'barrier', 'natural', 'name', 'service', 'layer', 'rack'}
 HW = 'way["highway"]["highway"!~"^(proposed|construction|platform|corridor|elevator|bus_stop|raceway|abandoned|razed|services|rest_area)$"]["footway"!~"^(sidewalk|crossing)$"]["area"!="yes"]'
@@ -65,7 +65,7 @@ for r, c in todo:
     report(f'{n_ok} ok, {n_fail} fallidas · {r}_{c}: {len(ways)} caminos en {time.time() - t0:.0f} s')
     if COMMIT_EVERY and since >= COMMIT_EVERY:
         write_index(); publish(f'Caminos de OpenStreetMap: {len(done_at)} de {ROWS * COLS} teselas'); notice(f'{len(done_at)} de {ROWS * COLS} teselas publicadas'); since = 0
-    time.sleep(3)
+    time.sleep(2)
 write_index(); publish(f'Caminos de OpenStreetMap: {len(done_at)} de {ROWS * COLS} teselas')
 notice(f'Hecho: {n_ok} teselas nuevas, {n_fail} fallidas, {len(done_at)} de {ROWS * COLS} en total')
 report(f'Hecho: {n_ok} nuevas, {n_fail} fallidas, {len(done_at)} de {ROWS * COLS}', 'success' if len(done_at) == ROWS * COLS else 'failure')
