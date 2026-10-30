@@ -1,0 +1,36 @@
+name: Caminos de OpenStreetMap
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 1 * *"
+  push:
+    branches: [main]
+    paths: ["tools/osm_tiles.py", ".github/workflows/osm.yml"]
+permissions:
+  contents: write
+concurrency:
+  group: osm
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Descargar caminos por teselas
+        run: python tools/osm_tiles.py
+      - name: Publicar en main y gh-pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/osm
+          git commit -m "Caminos de OpenStreetMap actualizados" || exit 0
+          git pull --rebase origin main
+          git push origin HEAD:main
+          git push --force origin HEAD:gh-pages
