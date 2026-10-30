@@ -24,11 +24,11 @@ const STATIONS = {
    bosque claro o de ribera, matorral). lc: peso de cada clase de 10 m al validar un punto (1 pinar denso, 2 pinar claro,
    3 frondosas densas, 4 bosque claro). aff: afinidad con cada especie de pino de la zona (afina dentro del pinar). */
 const SPECIES = {
-  rovello:  { n: "Rovelló",       lat: "Lactarius sanguifluus", aff: { pb: 1, pn: .9, ps: .8, al: .1, ro: .1 },  cov: { dp: 1, sp: .55, db: .12, sb: .1, sc: .12 },  lc: [0, 1, .5, 0, 0],   tmin: [5, 14], tmax: [13, 23], season: ["09-15", "10-10", "11-20", "12-20"], rainMin: 15, rainFull: 70, asp: 0,   hollow: .5 },
-  pinetell: { n: "Pinetell",      lat: "Lactarius deliciosus",  aff: { pb: .7, pn: .9, ps: 1, al: .1, ro: .1 },   cov: { dp: 1, sp: .55, db: .12, sb: .1, sc: .12 },  lc: [0, 1, .5, 0, 0],   tmin: [4, 13], tmax: [11, 21], season: ["09-10", "10-05", "11-20", "12-15"], rainMin: 15, rainFull: 70, asp: .03, hollow: .5 },
-  llenega:  { n: "Llenega negra", lat: "Hygrophorus latitatus", aff: { pb: .8, pn: 1, ps: .9, al: .2, ro: .2 },  cov: { dp: 1, sp: .5, db: .25, sb: .15, sc: .1 },   lc: [0, 1, .5, .2, 0],  tmin: [2, 12], tmax: [10, 20], season: ["10-01", "10-25", "12-10", "01-15"], rainMin: 15, rainFull: 70, asp: .05, hollow: .6 },
-  fredolic: { n: "Fredolic",      lat: "Tricholoma terreum",    aff: { pb: .7, pn: 1, ps: 1, al: .4, ro: .5 },  cov: { dp: 1, sp: .6, db: .5, sb: .35, sc: .2 },    lc: [0, 1, .5, .7, .4], tmin: [2, 11], tmax: [9, 19],  season: ["10-10", "11-01", "12-15", "01-31"], rainMin: 15, rainFull: 65, asp: 0,   hollow: .5 },
-  camagroc: { n: "Camagroc",      lat: "Craterellus lutescens", aff: { pb: .55, pn: .8, ps: 1, al: .65, ro: .6 }, cov: { dp: .85, sp: .4, db: .85, sb: .45, sc: .15 }, lc: [0, 1, .5, 1, .5], tmin: [3, 12], tmax: [9, 20],  season: ["10-05", "10-30", "01-10", "02-15"], rainMin: 25, rainFull: 90, asp: .15, hollow: 1, win: [0, 8, 12, 22, 30] }
+  rovello:  { n: "Rovelló",       lat: "Lactarius sanguifluus", aff: { pb: 1, pn: .9, ps: .55, al: .1, ro: .1 }, cov: { dp: 1, sp: .55, db: .12, sb: .1, sc: .12 },  lc: [0, 1, .5, 0, 0],   tmin: [5, 14], tmax: [13, 23], season: ["09-15", "10-10", "11-20", "12-20"], rainMin: 15, rainFull: 70, asp: 0,   hollow: .5 },
+  pinetell: { n: "Pinetell",      lat: "Lactarius deliciosus",  aff: { pb: .75, pn: .9, ps: 1, al: .1, ro: .1 },  cov: { dp: 1, sp: .55, db: .12, sb: .1, sc: .12 },  lc: [0, 1, .5, 0, 0],   tmin: [4, 13], tmax: [11, 21], season: ["09-10", "10-05", "11-20", "12-15"], rainMin: 15, rainFull: 70, asp: .03, hollow: .5 },
+  llenega:  { n: "Llenega negra", lat: "Hygrophorus latitatus", aff: { pb: .7, pn: 1, ps: .95, al: .2, ro: .2 }, cov: { dp: 1, sp: .5, db: .25, sb: .15, sc: .1 },   lc: [0, 1, .5, .2, 0],  tmin: [2, 12], tmax: [10, 20], season: ["10-01", "10-25", "12-10", "01-15"], rainMin: 15, rainFull: 70, asp: .05, hollow: .6 },
+  fredolic: { n: "Fredolic",      lat: "Tricholoma terreum",    aff: { pb: .8, pn: 1, ps: 1, al: .4, ro: .5 },  cov: { dp: 1, sp: .6, db: .5, sb: .35, sc: .2 },    lc: [0, 1, .5, .7, .4], tmin: [2, 11], tmax: [9, 19],  season: ["10-10", "11-01", "12-15", "01-31"], rainMin: 15, rainFull: 65, asp: 0,   hollow: .5 },
+  camagroc: { n: "Camagroc",      lat: "Craterellus lutescens", aff: { pb: .5, pn: .8, ps: 1, al: .65, ro: .6 }, cov: { dp: .85, sp: .4, db: .85, sb: .45, sc: .15 }, lc: [0, 1, .5, 1, .5], tmin: [3, 12], tmax: [9, 20],  season: ["10-05", "10-30", "01-10", "02-15"], rainMin: 25, rainFull: 90, asp: .15, hollow: 1, win: [0, 8, 12, 22, 30] }
 };
 
 const DEFAULT_PREFS = { sp: "rovello", flat: 0.7, interior: 90, shade: 1, hollow: 1, pathMin: 60, walkMax: 600, minLevel: 1, opacity: 0.7, kids: false, maxDrive: 45, carLevel: 2, dirtMax: 2000, climbMax: 100, avoidCrowd: false, minWalk: 300 };
@@ -119,27 +119,68 @@ function stationSummary(st, target, extraRain) {
     const tk = Object.keys(st.tmin).filter(k => { const a = daysBetween(parseDay(k), target); return a >= 1 && a <= 7; });
     if (tk.length) { tmin7 = tk.reduce((s, k) => s + st.tmin[k], 0) / tk.length; tmax7 = tk.reduce((s, k) => s + (st.tmax[k] ?? st.tmin[k]), 0) / tk.length; }
   }
-  return { rain, tmax: st.tmax || null, rain7, dryDays: dry, lastRain: last, tmin7, tmax7, rain21: keys.filter(k => { const a = daysBetween(parseDay(k), target); return a >= 0 && a <= 20; }).reduce((s, k) => s + (+rain[k] || 0), 0) };
+  // humedad del suelo (modelo, 3–9 cm): la de ese día respecto a la máxima de los 10 días anteriores
+  let smr = null;
+  if (st.sm) {
+    let cur = null, mx = 0;
+    for (const k in st.sm) { const a = daysBetween(parseDay(k), target), v = st.sm[k]; if (a < 0 || a > 10 || v == null) continue; if (v > mx) mx = v; if (a === 0 || (cur == null && a <= 1)) cur = v; }
+    if (cur != null && mx > 0) smr = cur / mx;
+  }
+  return { rain, tmax: st.tmax || null, rain7, dryDays: dry, lastRain: last, tmin7, tmax7, smr, rain21: keys.filter(k => { const a = daysBetween(parseDay(k), target); return a >= 0 && a <= 20; }).reduce((s, k) => s + (+rain[k] || 0), 0) };
+}
+
+/* ---------- Lluvia por zona: rejilla de puntos del modelo meteorológico (Open-Meteo) ----------
+   Las estaciones dicen cuánto ha llovido de verdad, pero solo donde están; el modelo dice dónde han caído los
+   chubascos, pero se equivoca en la cantidad. Se corrige el modelo con las estaciones: en cada estación,
+   lluvia medida / lluvia del modelo en los últimos 30 días (entre 0,4 y 2,5), interpolado a cada punto.
+   Cada punto de la rejilla pasa a ser una «estación» más (marcada como modelo) para el resto de cálculos. */
+function fieldPoints(b) {
+  const pts = []; for (let la = b.s; la <= b.n + 1e-9; la += b.dlat) for (let lo = b.w; lo <= b.e + 1e-9; lo += b.dlon) pts.push({ lat: Math.round(la * 1000) / 1000, lon: Math.round(lo * 1000) / 1000 });
+  return pts;
+}
+function buildModelField(pts, om, soil, rawStations, stMeta, todayKey) {
+  // om: respuesta diaria de Open-Meteo para pts y luego para las estaciones (en ese orden); soil: horaria solo para pts
+  const nP = pts.length, codes = Object.keys(rawStations).filter(c => stMeta[c] && !stMeta[c].model), today = parseDay(todayKey), bias = [];
+  codes.forEach((c, i) => {
+    const r = om[nP + i]; if (!r || !r.daily) return; let so = 0, sm = 0, n = 0;
+    r.daily.time.forEach((t, k) => { const a = daysBetween(parseDay(t), today); const ob = rawStations[c].rain[t]; if (a >= 1 && a <= 30 && ob != null) { so += +ob; sm += r.daily.precipitation_sum[k] || 0; n++; } });
+    if (n >= 15) bias.push({ lat: stMeta[c].lat, lon: stMeta[c].lon, lf: Math.log(clamp((so + 3) / (sm + 3), .4, 2.5)) });
+  });
+  const stations = {}, meta = {};
+  pts.forEach((p, i) => {
+    const r = om[i]; if (!r || !r.daily) return;
+    let num = 0, den = 0; for (const b of bias) { const d = Math.max(kmDist(p.lat, p.lon, b.lat, b.lon), 2), w = 1 / (d * d); num += w * b.lf; den += w; }
+    const F = den ? Math.exp(num / den) : 1, code = "M" + String(i).padStart(2, "0"), st = { rain: {}, tmin: {}, tmax: {}, model: true, F: Math.round(F * 100) / 100 };
+    r.daily.time.forEach((t, k) => { const v = r.daily.precipitation_sum[k]; if (v == null) return; st.rain[t] = Math.round(v * (t <= todayKey ? F : 1) * 10) / 10; st.tmin[t] = r.daily.temperature_2m_min[k]; st.tmax[t] = r.daily.temperature_2m_max[k]; });
+    const sr = soil && soil[i] && soil[i].hourly;
+    if (sr && sr.soil_moisture_3_to_9cm) { const acc = {}; sr.time.forEach((t, k) => { const v = sr.soil_moisture_3_to_9cm[k]; if (v == null) return; const d = t.slice(0, 10); (acc[d] || (acc[d] = [0, 0]))[0] += v; acc[d][1]++; }); st.sm = {}; for (const d in acc) st.sm[d] = Math.round(acc[d][0] / acc[d][1] * 1000) / 1000; }
+    stations[code] = st; meta[code] = { n: "Modelo " + p.lat.toFixed(2) + ", " + p.lon.toFixed(2), lat: p.lat, lon: p.lon, alt: r.elevation ?? 500, model: true };
+  });
+  return { stations, meta, bias: bias.length };
 }
 
 /* Meteo interpolada en un punto (IDW potencia 2). Las temperaturas se llevan a nivel del mar (−0,6 °C/100 m). */
 function meteoAt(lat, lon, summ, Rst) {
-  let w = 0, acc = { R: 0, rain7: 0, t0min: 0, t0max: 0 }, near = null, nd = 1e9, wt = 0;
+  let w = 0, acc = { R: 0, rain7: 0, t0min: 0, t0max: 0, smr: 0 }, near = null, nd = 1e9, wt = 0, ws = 0;
   for (const [k, st] of Object.entries(STATIONS)) {
     const m = summ[k]; if (!m) continue;
     const d = Math.max(kmDist(lat, lon, st.lat, st.lon), 1.5), wi = 1 / (d * d);
     if (d < nd) { nd = d; near = k; }
     acc.R += wi * (Rst && Rst[k] != null ? Rst[k] : 0); acc.rain7 += wi * m.rain7; w += wi;
     if (m.tmin7 != null && m.tmax7 != null) { acc.t0min += wi * (m.tmin7 + .006 * st.alt); acc.t0max += wi * (m.tmax7 + .006 * st.alt); wt += wi; }
+    if (m.smr != null) { acc.smr += wi * m.smr; ws += wi; }
   }
   if (!w) return null;
-  return { R: acc.R / w, rain7: acc.rain7 / w, t0min: wt ? acc.t0min / wt : 16, t0max: wt ? acc.t0max / wt : 24, near, nearKm: nd, dryDays: summ[near].dryDays, lastRain: summ[near].lastRain };
+  return { R: acc.R / w, rain7: acc.rain7 / w, t0min: wt ? acc.t0min / wt : 16, t0max: wt ? acc.t0max / wt : 24, near, nearKm: nd, dryDays: summ[near].dryDays, lastRain: summ[near].lastRain, smr: ws ? acc.smr / ws : null };
 }
 function forestMix(lat, lon, zones) {
   const mix = { pb: 0, pn: 0, ps: 0, al: 0, ro: 0 }; let w = 0;
   for (const z of zones) { const d = Math.max(kmDist(lat, lon, z.lat, z.lon), 1), wi = 1 / (d * d); w += wi; for (const t in mix) mix[t] += wi * (z.f[t] || 0); }
   for (const t in mix) mix[t] /= w; return mix;
 }
+/* Suelo que se seca: con la humedad del suelo del modelo (relativa a la máxima de los 10 días anteriores).
+   ≥ 90 % → nada; 45 % o menos → 0,55. Sin datos de suelo no cambia nada. */
+const soilF = smr => smr == null ? 1 : clamp(.55 + .45 * (smr - .45) / .45, .55, 1);
 // Factores de meteo para una especie en un punto (sin el terreno)
 function meteoFactors(s, m, alt, date) {
   const R = clamp(m.R, .05, 1);
@@ -152,6 +193,7 @@ function meteoFactors(s, m, alt, date) {
   else if (m.dryDays >= 4 && tmax > 17) { a = .25; D = .92; }
   else a = .12;
   let T = (band(tmin, ...s.tmin) + band(tmax, ...s.tmax)) / 2; if (tmin < 0) T *= .4;
+  D = Math.min(D, soilF(m.smr));
   return { R, D, T, a: a + s.asp, S: seasonF(s, date), tmin, tmax };
 }
 
@@ -176,6 +218,9 @@ class Grid {
   setElev(e) { for (let i = 0, p = 0; i < this.n; i++, p += 4) this.zz[i] = e[p] * 256 + e[p + 1]; }
   setTerrain(t) { for (let i = 0, p = 0; i < this.n; i++, p += 4) { this.sl4[i] = t[p]; this.asp[i] = t[p + 1]; this.tpi8[i] = t[p + 2] - 128; } }
   setCover1(c) { const n = this.n; this.cdp = new Uint8Array(n); this.csp = new Uint8Array(n); this.cdb = new Uint8Array(n); for (let i = 0, p = 0; i < n; i++, p += 4) { this.cdp[i] = c[p]; this.csp[i] = c[p + 1]; this.cdb[i] = c[p + 2]; } this.hasCover = !!this.csb; }
+  // Pinares por especie (Mapa Forestal de España): se guarda la dominante (1 pi blanc, 2 pinassa, 3 pi roig) y su fracción
+  setPines(px) { const n = this.n; this.pine = new Uint8Array(n); for (let i = 0, p = 0; i < n; i++, p += 4) { const a = px[p], b = px[p + 1], c = px[p + 2], m = Math.max(a, b, c); if (m < 13) continue; this.pine[i] = ((m === a ? 1 : m === b ? 2 : 3) << 6) | Math.round(m / 255 * 63); } }
+  pineOf(k) { const v = this.pine ? this.pine[k] : 0; return v ? { t: v >> 6, f: (v & 63) / 63 } : null; }
   setCover2(c) { const n = this.n; this.csb = new Uint8Array(n); this.csc = new Uint8Array(n); for (let i = 0, p = 0; i < n; i++, p += 4) { this.csb[i] = c[p]; this.csc[i] = c[p + 1]; } this.hasCover = !!this.cdp; }
   /* Relieve desde la altitud, igual que se hacía antes en el ordenador:
      pendiente y orientación = gradiente central del modelo suavizado (gaussiana σ = 1 celda);
@@ -240,8 +285,8 @@ function computeScores(grid, summ, prefs, date, step = 1) {
     const mix = forestMix(la, lo, grid.zones); let Hf = 0; for (const t in mix) Hf += mix[t] * (s.aff[t] || 0);
     // dentro del pinar, la especie de pino de la zona afina un poco (pino carrasco, laricio, silvestre)
     const pw = mix.pb + mix.pn + mix.ps, pMod = pw > 0 ? (mix.pb * s.aff.pb + mix.pn * s.aff.pn + mix.ps * s.aff.ps) / pw : 1;
-    const cv = s.cov, cdp = cv.dp * pMod / 255, csp = cv.sp * pMod / 255, cdb = cv.db / 255, csb = cv.sb / 255, csc = cv.sc / 255;
-    const S = seasonF(s, date), R = clamp(m.R, .05, 1);
+    const cv = s.cov, cdp = cv.dp / 255, csp = cv.sp / 255, cdb = cv.db / 255, csb = cv.sb / 255, csc = cv.sc / 255, PA = [pMod, s.aff.pb, s.aff.pn, s.aff.ps], pine = grid.pine;
+    const S = seasonF(s, date), R = clamp(m.R, .05, 1), sF = soilF(m.smr);
     for (let i = bi; i < Math.min(H, bi + BS); i++) for (let j = bj; j < Math.min(W, bj + BS); j++) {
       if (step > 1 && (i % step || j % step)) continue;
       const k = i * W + j, fl = grid.flags[k]; if (!(fl & 1)) continue;
@@ -249,7 +294,11 @@ function computeScores(grid, summ, prefs, date, step = 1) {
       // Bosque adecuado de verdad en la celda (mapa de cubiertas del ICGC, 1 m): un campo, un matorral o una franja de
       // árboles entre cultivos no puntúan. Pinar denso al 85 % o más = 1; por debajo del 25 % de bosque adecuado = 0.
       let Ff;
-      if (grid.hasCover) { const Hc = grid.cdp[k] * cdp + grid.csp[k] * csp + grid.cdb[k] * cdb + grid.csb[k] * csb + grid.csc[k] * csc; Ff = clamp((Hc - .25) / .6, 0, 1); }
+      if (grid.hasCover) {
+        // especie de pino de esa celda (mapa forestal) si se conoce; si no, la mezcla de la zona
+        let pm = pMod; if (pine && pine[k]) { const v = pine[k], w = Math.min(1, (v & 63) / 31.5); pm = w * PA[v >> 6] + (1 - w) * pMod; }
+        const Hc = (grid.cdp[k] * cdp + grid.csp[k] * csp) * pm + grid.cdb[k] * cdb + grid.csb[k] * csb + grid.csc[k] * csc; Ff = clamp((Hc - .25) / .6, 0, 1);
+      }
       else Ff = clamp((grid.tr8[k] / 255 - .35) / .45, 0, 1) * Hf;
       if (Ff <= 0) { out[k] = 0; continue; }
       const z = grid.zz[k], tmin = m.t0min - .006 * z, tmax = m.t0max - .006 * z;
@@ -257,7 +306,7 @@ function computeScores(grid, summ, prefs, date, step = 1) {
       if (m.rain7 < 3) D = tmax > 24 ? .7 : tmax > 20 ? .82 : .92;
       if (tmin < 4) a = -.25; else if (m.rain7 < 3 && tmax > 20) a = .35; else if (m.rain7 < 3) a = .25;
       else if (m.dryDays >= 4 && tmax > 17) { a = .25; D = .92; } else a = .12;
-      a += s.asp;
+      a += s.asp; D = Math.min(D, sF);
       let T = (band(tmin, s.tmin[0], s.tmin[1]) + band(tmax, s.tmax[0], s.tmax[1])) / 2; if (tmin < 0) T *= .4;
       const sl = grid.sl4[k] / 4;
       let Sl = 1 - flat * (1 - interp(sl, SLX, SLY)); if (prefs.kids && sl > 20) Sl *= .5;
@@ -304,7 +353,7 @@ function zoneRanking(grid, sc, muniArr, munis, step) {
 function extendStations(raw, fc, todayKey) {
   const st = {};
   for (const [c, s0] of Object.entries(raw.stations)) {
-    const f = fc[c], s = { rain: Object.assign({}, s0.rain), tmin: Object.assign({}, s0.tmin || {}), tmax: Object.assign({}, s0.tmax || {}), tmin7: s0.tmin7, tmax7: s0.tmax7 };
+    const f = fc[c], s = { rain: Object.assign({}, s0.rain), tmin: Object.assign({}, s0.tmin || {}), tmax: Object.assign({}, s0.tmax || {}), tmin7: s0.tmin7, tmax7: s0.tmax7, sm: s0.sm, model: s0.model };
     if (f) {
       const adj = -.006 * ((STATIONS[c] ? STATIONS[c].alt : 400) - (f.elevation ?? 400));
       f.daily.time.forEach((t, i) => { if (t > todayKey) { s.rain[t] = f.daily.precipitation_sum[i] || 0; s.tmin[t] = f.daily.temperature_2m_min[i] + adj; s.tmax[t] = f.daily.temperature_2m_max[i] + adj; } });
@@ -416,6 +465,7 @@ function climbProfile(grid, a, b) {
    5 matorral · 6 abierto, cultivo o prado · 7 urbano o vial · 8 agua · 9 vía de tren, industria o minas · 10 roca.
    Coste relativo de andar campo a través por cada clase (Infinity = no se pasa). */
 const WALK_COST = [1.3, 1, 1, 1.2, 1, 1.7, 1, 1.1, Infinity, Infinity, 3];
+const PINE_NAMES = ["", "pino blanco (pi blanc)", "pinassa", "pino rojo (pi roig) o pino negro"];
 const LC_CLASS_NAMES = ["fuera del mapa", "pinar denso", "pinar claro", "bosque denso de frondosas", "bosque claro o de ribera", "matorral", "campo, cultivo o prado", "urbano o carretera", "agua", "vía de tren, industria o minas", "roca"];
 // Ventana de 10 m: la caja de búsqueda más un margen para poder aparcar fuera de ella
 function walkWindow(lcm, bbox, prefs) {
@@ -603,7 +653,7 @@ function analyzeWindow(grid, sc, th, bbox, ways, prefs, me, lc) {
     const route = simplify(pts, 4).map(x => [Math.round(x[0] * 1e6) / 1e6, Math.round(x[1] * 1e6) / 1e6]);
     if (park) park.dist = Math.hypot((park.lat - latOf(i0)) * 110540, (park.lon - lonOf(j0)) * 111320 * cosL);
     return { lat, lon, score: sc[k], adj: p.v, level: absLevel(sc[k]), slope: grid.slope(k), aspect: grid.aspect(k), z: Math.round(z[q]), edge: grid.edge(k), tree: grid.tree(k),
-      cover: cls[q], forest: Math.round(S10[q] * 100) / 100, dPath: Math.round(dPath[q]), walk: Math.round(real[q] + (park ? park.dist : 0)), park,
+      cover: cls[q], forest: Math.round(S10[q] * 100) / 100, pine: grid.pineOf ? grid.pineOf(k) : null, dPath: Math.round(dPath[q]), walk: Math.round(real[q] + (park ? park.dist : 0)), park,
       prof: { up: Math.round(up[q]), down: Math.round(down[q]) }, route, crowd: crowdAt(q), fromMe: me ? kmDist(me.lat, me.lon, lat, lon) : null };
   });
   const out = { window: { i0: lc.i0, j0: lc.j0, w: W, h: H }, net, spots, barriers: barriers.length, reached: cand.length };
@@ -611,4 +661,4 @@ function analyzeWindow(grid, sc, th, bbox, ways, prefs, me, lc) {
   return out;
 }
 
-if (typeof module !== "undefined") module.exports = { walkWindow, WALK_COST, LC_CLASS_NAMES, barrierKind, walkableKind, simplify, climbProfile, roadClass, roadNetwork, nearestParking, effClass, ROAD_CLASS, CAR_LEVELS, STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };
+if (typeof module !== "undefined") module.exports = { PINE_NAMES, fieldPoints, buildModelField, soilF, walkWindow, WALK_COST, LC_CLASS_NAMES, barrierKind, walkableKind, simplify, climbProfile, roadClass, roadNetwork, nearestParking, effClass, ROAD_CLASS, CAR_LEVELS, STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };

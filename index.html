@@ -56,6 +56,7 @@
   <div class="panel" id="p-cerca" role="tabpanel" hidden>
     <button id="analyzeBtn" class="btn primary wide" type="button">Buscar los mejores puntos en lo que veo</button>
     <p class="hint" id="analyzeHint">Usa los caminos reales de OpenStreetMap y el mapa de bosque del ICGC: busca dónde aparcar con tu coche y traza la ruta a pie hasta bosque de verdad, sin cruzar vías de tren, ríos, autovías ni vallas. Acerca el mapa a la zona que te interese (unos 5 km).</p>
+    <button id="saveZone" class="btn wide" type="button" hidden>Guardar esta zona para usarla sin cobertura</button>
     <ol id="spots" class="spots"></ol>
   </div>
 
@@ -65,6 +66,7 @@
     <p id="fcText" class="fc-text"></p>
     <h3>Estaciones Meteocat</h3>
     <div class="tablewrap"><table class="meteo" id="meteoTable"></table></div>
+    <p class="hint" id="fieldNote"></p>
   </div>
 
   <div class="panel" id="p-diario" role="tabpanel" hidden>
@@ -102,6 +104,9 @@
     <div class="slider"><label for="hollow">Peso de las vaguadas</label><input type="range" id="hollow" min="0" max="2" step="0.1"><output id="hollowV"></output></div>
     <div class="slider"><label for="minLevel">Mostrar en el mapa</label><input type="range" id="minLevel" min="1" max="3" step="1"><output id="minLevelV"></output></div>
     <div class="slider"><label for="opacity">Opacidad de la capa</label><input type="range" id="opacity" min="0.2" max="1" step="0.05"><output id="opacityV"></output></div>
+    <h3>Zonas guardadas sin cobertura</h3>
+    <ol id="offZones" class="finds"></ol>
+    <p class="hint">Cada zona guarda los caminos y el mapa topográfico del ICGC (de 15 a 50 MB según el tamaño). Sin cobertura, busca puntos, rutas y guía igual que con conexión; el GPS funciona sin datos. Usa el mapa «Topográfico (ICGC)».</p>
     <div class="row"><button id="resetPrefs" class="btn" type="button">Valores por defecto</button><button id="refreshMeteo" class="btn" type="button">Actualizar meteo</button></div>
     <details class="about"><summary>Cómo funciona</summary>
       <p>Cubre el Bages y el Berguedà. Cada cuadrito de unos 30 m recibe un <b>índice de 0 a 100</b>. No es un porcentaje de probabilidad, sino una nota:</p>
@@ -114,10 +119,12 @@
       </ul>
       <p>El índice multiplica varios factores:</p>
       <ul>
+        <li><b>La lluvia de cada zona.</b> Sale de las estaciones de Meteocat y de una rejilla del modelo de Open-Meteo (un punto cada ~7 km), corregida con lo que han medido las estaciones: así se ven los chubascos que caen en un sitio y no en otro. También cuenta la humedad del suelo del modelo.</li>
         <li><b>La lluvia por episodios.</b> Cada episodio de lluvia da una salida de setas entre los días 10 y 17 después de acabar, y se apaga hacia el día 25. Cuanta más lluvia, más fuerza. Si después vienen muchos días secos, y más aún si hace calor, la salida se malogra. No se suman episodios.</li>
         <li>La temperatura de la última semana, corregida por altitud.</li>
         <li>La época del año.</li>
         <li>El bosque real, del mapa de cubiertas del suelo del ICGC (2024, detalle de 1 m): pinar denso, pinar claro, encinar o robledal, bosque de ribera, matorral… Un matorral, un campo o una franja de árboles entre cultivos no puntúan.</li>
+        <li>La especie de pino de cada bosque, del Mapa Forestal de España: el rovelló prefiere el pino blanco y la pinassa; el pinetell, el pino rojo.</li>
         <li>Lo lejos que estás del borde del bosque.</li>
         <li>La pendiente, la orientación y las vaguadas.</li>
       </ul>

@@ -1,6 +1,6 @@
 /* Bolets Bages y Berguedà · app */
 "use strict";
-const VERSION = "1.7 · 30-10-2026";
+const VERSION = "1.8 · 30-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -35,13 +35,13 @@ const map = L.map("map", { zoomControl: false, minZoom: 9, maxZoom: 19, maxBound
 map.createPane("prob").style.zIndex = 350;
 const ICGC = L.TileLayer.extend({
   getTileUrl(c) {
-    return "https://geoserveis.icgc.cat/servei/catalunya/mapa-base/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=" + this.options.layer +
-      "&STYLE=default&TILEMATRIXSET=MON3857NW&TILEMATRIX=" + String(c.z).padStart(2, "0") + "&TILEROW=" + c.y + "&TILECOL=" + c.x + "&FORMAT=image/png";
+    // formato REST (el KVP con TILEMATRIXSET devuelve «unknown tilematrixset» desde 2026)
+    return "https://geoserveis.icgc.cat/servei/catalunya/mapa-base/wmts/" + this.options.layer + "/MON3857NW/" + c.z + "/" + c.x + "/" + c.y + ".png";
   }
 });
 const bases = {
-  "Topográfico (ICGC)": new ICGC("", { layer: "topografic", maxNativeZoom: 18, maxZoom: 19, attribution: "© ICGC" }),
-  "Ortofoto (ICGC)": new ICGC("", { layer: "orto", maxNativeZoom: 18, maxZoom: 19, attribution: "© ICGC" }),
+  "Topográfico (ICGC)": new ICGC("", { layer: "topografic", maxNativeZoom: 19, maxZoom: 19, attribution: "© ICGC" }),
+  "Ortofoto (ICGC)": new ICGC("", { layer: "orto", maxNativeZoom: 19, maxZoom: 19, attribution: "© ICGC" }),
   "OpenTopoMap": L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", { maxNativeZoom: 17, maxZoom: 19, subdomains: "abc", attribution: "© OpenStreetMap, SRTM · OpenTopoMap (CC-BY-SA)" }),
   "Satélite (Esri)": L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 18, maxZoom: 19, attribution: "© Esri, Maxar, Earthstar Geographics" }),
   "OpenStreetMap": L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxNativeZoom: 19, maxZoom: 19, attribution: "© OpenStreetMap" })
@@ -50,7 +50,7 @@ let baseName = LS.get("bb.base", "Topográfico (ICGC)"); if (!bases[baseName]) b
 bases[baseName].addTo(map);
 // Si el mapa del ICGC falla al arrancar, se cambia solo a OpenTopoMap
 let tileErr = 0, tileOk = 0; bases[baseName].on("tileload", () => tileOk++);
-bases[baseName].on("tileerror", () => { if (++tileErr === 12 && tileOk === 0 && baseName.includes("ICGC")) { map.removeLayer(bases[baseName]); baseName = "OpenTopoMap"; bases[baseName].addTo(map); toast("El mapa del ICGC no responde: cambio a OpenTopoMap"); } });
+bases[baseName].on("tileerror", () => { if (++tileErr === 12 && tileOk === 0 && baseName.includes("ICGC") && navigator.onLine !== false) { map.removeLayer(bases[baseName]); baseName = "OpenTopoMap"; bases[baseName].addTo(map); toast("El mapa del ICGC no responde: cambio a OpenTopoMap"); } });
 map.on("baselayerchange", e => { baseName = e.name; LS.set("bb.base", baseName); });
 const layerProb = L.layerGroup(), layerCar = L.layerGroup(), layerSpots = L.layerGroup().addTo(map), layerFinds = L.layerGroup().addTo(map), layerPlan = L.layerGroup().addTo(map);
 L.control.layers(bases, { "Probabilidad": layerProb, "Accesos en coche (OSM)": layerCar, "Puntos": layerSpots, "Diario": layerFinds }, { position: "topright", collapsed: true }).addTo(map);
@@ -75,6 +75,7 @@ async function loadGrid() {
   if (!(await loadTerrainCache(g))) { setStatus("Calculando pendientes y orientaciones (solo la primera vez)…"); await new Promise(r => setTimeout(r, 30)); g.computeTerrain(); saveTerrainCache(g); }
   g.setCover1(await loadPixels("data/cover1.png"));
   g.setCover2(await loadPixels("data/cover2.png"));
+  try { g.setPines(await loadPixels("data/pines.png")); } catch (e) { console.warn("pinos", e); }
   const mu = await loadPixels("data/munis.png"); App.muniArr = new Uint8Array(g.n); for (let i = 0, p = 0; i < g.n; i++, p += 4) App.muniArr[i] = mu[p];
   App.munis = await fetchJSON("data/munis.json");
   App.grid = g;
@@ -162,14 +163,37 @@ async function fetchMeteoLive() {
 }
 async function loadMeteo(force) {
   const cached = LS.get("bb.meteo", null);
-  if (!force && cached && cached.v === 3 && Date.now() - new Date(cached.fetched) < 2 * 3600e3) { App.raw = cached; return; }
+  if (!force && cached && cached.v === 4 && Date.now() - new Date(cached.fetched) < 2 * 3600e3) { App.raw = cached; registerModel(App.raw); return; }
   setStatus("Descargando meteo de Meteocat…");
-  try { App.raw = await fetchMeteoLive(); App.raw.v = 3; LS.set("bb.meteo", App.raw); }
-  catch (e) {
-    if (cached) { App.raw = cached; toast("Sin conexión con Meteocat: uso la última meteo guardada"); }
+  try {
+    const raw = await fetchMeteoLive(); raw.v = 4;
+    setStatus("Descargando la lluvia por zona…");
+    // el modelo se renueva cada 6 h (gasta muchas consultas gratuitas de Open-Meteo); entre medias se reutiliza
+    const fresh = cached && cached.model && cached.modelAt && Date.now() - new Date(cached.modelAt) < 6 * 3600e3;
+    try { if (fresh) { for (const c in cached.model) raw.stations[c] = cached.stations[c]; raw.model = cached.model; raw.modelBias = cached.modelBias; raw.modelAt = cached.modelAt; } else await addModelField(raw); } catch (e) { console.warn("modelo", e); if (cached && cached.model) { for (const c in cached.model) raw.stations[c] = cached.stations[c]; raw.model = cached.model; raw.modelOld = true; } }
+    App.raw = raw; registerModel(raw); LS.set("bb.meteo", raw);
+  } catch (e) {
+    if (cached) { App.raw = cached; registerModel(cached); toast("Sin conexión con Meteocat: uso la última meteo guardada"); }
     else { App.raw = await fetchJSON("data/meteo-fallback.json"); toast("Sin conexión con Meteocat: uso datos guardados del " + App.raw.lastDay); }
   }
 }
+/* Lluvia por zona: rejilla de 91 puntos (cada ~7 km) del modelo de Open-Meteo, corregida con las estaciones de Meteocat */
+const FIELD_BOX = { s: 41.62, n: 42.32, w: 1.58, e: 2.06, dlat: .06, dlon: .08 };
+async function addModelField(raw) {
+  const pts = fieldPoints(FIELD_BOX), codes = Object.keys(raw.stations).filter(c => STATIONS[c] && !STATIONS[c].model);
+  const all = pts.concat(codes.map(c => ({ lat: STATIONS[c].lat, lon: STATIONS[c].lon })));
+  const ll = a => "latitude=" + a.map(p => p.lat.toFixed(3)).join(",") + "&longitude=" + a.map(p => p.lon.toFixed(3)).join(",");
+  const base = "https://api.open-meteo.com/v1/forecast?" , tz = "&timezone=Europe%2FMadrid";
+  const [om, soil] = await Promise.all([
+    fetchJSON(base + ll(all) + "&daily=precipitation_sum,temperature_2m_max,temperature_2m_min&past_days=31&forecast_days=8" + tz, 30000),
+    fetchJSON(base + ll(pts) + "&hourly=soil_moisture_3_to_9cm&past_days=10&forecast_days=8" + tz, 30000).catch(() => null)
+  ]);
+  const arr = Array.isArray(om) ? om : [om], sarr = soil ? (Array.isArray(soil) ? soil : [soil]) : null;
+  const f = buildModelField(pts, arr, sarr, raw.stations, STATIONS, dayKey(new Date()));
+  if (Object.keys(f.stations).length < 10) throw new Error("modelo incompleto");
+  Object.assign(raw.stations, f.stations); raw.model = f.meta; raw.modelBias = f.bias; raw.modelAt = new Date().toISOString();
+}
+function registerModel(raw) { if (raw && raw.model) Object.assign(STATIONS, raw.model); }
 function summaryAt(raw, date) { const o = {}; for (const [c, st] of Object.entries(raw.stations)) o[c] = stationSummary(st, date); return o; }
 function summarize() {
   const d = App.date || new Date();
@@ -230,7 +254,7 @@ function meteoStatus() {
   const c = map.getCenter(); const m = meteoAt(c.lat, c.lng, App.summ);
   const when = new Date(App.raw.fetched);
   let txt = (App.raw.source === "Meteocat en directo" ? "Meteo de " : "Meteo guardada de ") + when.toLocaleDateString("es-ES", { day: "numeric", month: "short" }) + " " + when.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
-  if (m && m.lastRain) txt += " · última lluvia fuerte hace " + m.lastRain.age + " días (" + m.lastRain.mm + " mm)";
+  if (m && m.lastRain) txt += " · última lluvia fuerte aquí hace " + m.lastRain.age + " días (" + m.lastRain.mm + " mm)";
   const age = (Date.now() - when) / 3600e3;
   setStatus(txt, age < 6 ? "ok" : "old");
 }
@@ -296,7 +320,8 @@ async function analyze() {
   const btn = $("#analyzeBtn"), status = t => { btn.textContent = t; };
   analyzing = true; btn.disabled = true; App.anaError = null; dimSpots(true);
   try {
-    let z = cachedZone(box);
+    let z = cachedZone(box) || await offlineZone(box);
+    if (!z && navigator.onLine === false) throw Object.assign(new Error("sin conexión"), { offline: true });
     if (!z) {
       const bb = [box.s, box.w, box.n, box.e].map(v => v.toFixed(5)).join(","), M = .02;
       const bx = [box.s - M, box.w - M * 1.3, box.n + M, box.e + M * 1.3].map(v => v.toFixed(5)).join(",");
@@ -317,7 +342,7 @@ async function analyze() {
     await runAnalysis(true);
   } catch (e) {
     console.error(e);
-    App.anaError = e.busy ? "Los servidores de OpenStreetMap están saturados y no he podido descargar los caminos de esta zona." : "No he podido descargar los caminos de esta zona (" + (navigator.onLine === false ? "sin conexión" : e.message) + ").";
+    App.anaError = e.offline ? "Sin cobertura, y esta zona no está guardada. Las zonas guardadas se ven en Ajustes." : e.busy ? "Los servidores de OpenStreetMap están saturados y no he podido descargar los caminos de esta zona." : "No he podido descargar los caminos de esta zona (" + (navigator.onLine === false ? "sin conexión" : e.message) + ").";
     dimSpots(false); renderSpotList(); openSheet("cerca");
     toast(App.anaError + " Prueba otra vez en un minuto.", 6000);
   } finally { analyzing = false; btn.disabled = false; btn.textContent = "Buscar los mejores puntos en lo que veo"; }
@@ -337,7 +362,7 @@ async function runAnalysisAsync(fit) {
   boxLayer = L.rectangle([[box.s, box.w], [box.n, box.e]], { color: "#1f2a22", weight: 1, dashArray: "4 6", fill: false, interactive: false }).addTo(map);
   App.analysis = { box, spots: res.spots, when: new Date().toISOString(), sp: App.prefs.sp }; App.anaError = null;
   LS.set("bb.lastAnalysis", App.analysis);
-  drawSpots(); renderSpotList();
+  drawSpots(); renderSpotList(); updateSaveBtn();
   if (fit) {
     if (!res.spots.length) toast("No hay zonas buenas que cumplan tus ajustes aquí. Prueba a subir la distancia andando o a mover el mapa.");
     else { openSheet("cerca"); }
@@ -409,7 +434,7 @@ function spotLine(s) {
   if (s.walk != null) bits.push((s.route ? "ruta a pie de " : "") + fmtDist(s.walk) + " desde el coche");
   if (s.park) { const wn = wayName(s.park.way); bits.push((s.park.dirt > 30 ? "en coche, " + fmtDist(s.park.dirt) + " de tierra desde el asfalto" : "aparcas junto al asfalto") + (wn ? " (" + wn + ")" : "")); }
   if (s.prof) bits.push(s.prof.up + s.prof.down < 15 ? "casi sin desnivel" : "sube " + s.prof.up + " m y baja " + s.prof.down + " m");
-  if (s.cover != null) bits.push(LC_CLASS_NAMES[s.cover] + ", " + fmt(s.forest * 100) + " % de bosque bueno alrededor");
+  if (s.cover != null) bits.push(LC_CLASS_NAMES[s.cover] + (s.pine && s.pine.f > .3 ? " de " + PINE_NAMES[s.pine.t] : "") + ", " + fmt(s.forest * 100) + " % de bosque bueno alrededor");
   if (s.crowd != null) bits.push(CROWD(s.crowd));
   bits.push((s.slope < 6 ? "llano" : s.slope < 12 ? "suave" : "inclinado") + " (" + fmt(s.slope) + "°)" + (s.slope >= 4 ? ", mira al " + DIRL[d] : ""));
   bits.push(fmtDist(s.dPath) + " del camino o sendero más cercano");
@@ -452,7 +477,7 @@ map.on("click", e => {
   if (!ci) { div.textContent = "Fuera del Bages y el Berguedà."; }
   else {
     const d = dirIdx(ci.aspect);
-    div.innerHTML = "<b>" + (ci.v > 0 ? ABS_NAMES[ci.level] + " · índice " + fmt(ci.v) + " de 100" : "Sin bosque o terreno no apto") + "</b>" + (ci.v > 0 ? "<div>" + ["", "Entre el 25 % mejor del bosque hoy", "Entre el 10 % mejor del bosque hoy", "Entre el 3 % mejor del bosque hoy"][ci.rel] + "</div>" : "") + "<dl><dt>Terreno</dt><dd>" + (ci.slope < 6 ? "llano" : ci.slope < 12 ? "suave" : "inclinado") + " (" + fmt(ci.slope) + "°)" + (ci.slope >= 4 ? ", mira al " + DIRL[d] : "") + "</dd><dt>Altitud</dt><dd>" + fmt(ci.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(ci.tree * 100) + " % arbolado" + (ci.edge > 0 ? ", " + fmtDist(ci.edge) + " dentro" : "") + "</dd><dt>Aquí mismo</dt><dd class=\"lcc\">…</dd></dl><div class=\"acts\"></div>";
+    div.innerHTML = "<b>" + (ci.v > 0 ? ABS_NAMES[ci.level] + " · índice " + fmt(ci.v) + " de 100" : "Sin bosque o terreno no apto") + "</b>" + (ci.v > 0 ? "<div>" + ["", "Entre el 25 % mejor del bosque hoy", "Entre el 10 % mejor del bosque hoy", "Entre el 3 % mejor del bosque hoy"][ci.rel] + "</div>" : "") + "<dl><dt>Terreno</dt><dd>" + (ci.slope < 6 ? "llano" : ci.slope < 12 ? "suave" : "inclinado") + " (" + fmt(ci.slope) + "°)" + (ci.slope >= 4 ? ", mira al " + DIRL[d] : "") + "</dd><dt>Altitud</dt><dd>" + fmt(ci.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(ci.tree * 100) + " % arbolado" + (ci.edge > 0 ? ", " + fmtDist(ci.edge) + " dentro" : "") + "</dd><dt>Aquí mismo</dt><dd class=\"lcc\">…</dd>" + (() => { const pi = App.grid.pineOf(ci.k); return pi && pi.f > .2 ? "<dt>Pinar</dt><dd>" + PINE_NAMES[pi.t] + " (mapa forestal)</dd>" : ""; })() + "</dl><div class=\"acts\"></div>";
     lcClassAt(e.latlng.lat, e.latlng.lng).then(c => { const dd = div.querySelector(".lcc"); if (dd) dd.textContent = c == null ? "–" : LC_CLASS_NAMES[c] + " (ICGC)"; }).catch(() => { });
     const acts = div.querySelector(".acts"), la = e.latlng.lat, lo = e.latlng.lng;
     acts.append(mkBtn("Guiarme a pie", () => { map.closePopup(); startGuide(la, lo, "Punto marcado"); }));
@@ -480,6 +505,84 @@ function nearestOnSegmentsApp(lat, lon, segs) {
   }
   return best;
 }
+
+/* ---------- Zonas guardadas para usar sin cobertura ----------
+   Se guardan en el móvil: los caminos de OpenStreetMap de la zona (para buscar puntos y rutas) y el mapa
+   topográfico del ICGC (zooms 13 a 16, con margen; sin conexión se amplía el 16). Las teselas se piden al ICGC,
+   que permite este uso; OpenStreetMap y OpenTopoMap no permiten descargas masivas. */
+const OFF = "bb-offline", offIndex = () => LS.get("bb.offZones", []);
+const t2x = (lon, z) => Math.floor((lon + 180) / 360 * 2 ** z);
+const t2y = (lat, z) => { const r = lat * Math.PI / 180; return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 2 ** z); };
+function tileRanges(box) {
+  const R = {};
+  for (let z = 13; z <= 16; z++) { const m = .01; R[z] = [t2x(box.w - m * 1.3, z), t2x(box.e + m * 1.3, z), t2y(box.n + m, z), t2y(box.s - m, z)]; }
+  return R;
+}
+function tileUrls(R) { const L0 = bases["Topográfico (ICGC)"], out = []; for (const z in R) { const [x0, x1, y0, y1] = R[z]; for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) out.push(L0.getTileUrl({ x, y, z: +z })); } return out; }
+const KB_Z = { 13: 360, 14: 340, 15: 290, 16: 100 }; // tamaño medio de las teselas del mapa topográfico del ICGC (medido)
+function estMB(R) { let kb = 0; for (const z in R) { const [x0, x1, y0, y1] = R[z]; kb += (x1 - x0 + 1) * (y1 - y0 + 1) * (KB_Z[z] || 60); } return kb / 1000; }
+function boxIn(a, b, T = .002) { return a.n <= b.n + T && a.s >= b.s - T && a.w >= b.w - T && a.e <= b.e + T; }
+async function offlineZone(box) {
+  const z = offIndex().find(o => boxIn(box, o.box) && Date.now() - o.t < 45 * 86400e3); if (!z || !("caches" in window)) return null;
+  try { const r = await (await caches.open(OFF)).match("offline/" + z.id + ".json"); if (!r) return null; const d = await r.json(); const zz = { box: d.box, ways: d.ways, places: d.places, saved: z.id }; storeZone(zz); return zz; } catch (e) { return null; }
+}
+let saving = false;
+function updateSaveBtn() {
+  const b = $("#saveZone"); if (!b) return; const box = App.ways && App.ways.box;
+  const saved = box && offIndex().find(o => boxIn(box, o.box));
+  b.hidden = !box || !("caches" in window); b.disabled = saving || !!saved;
+  if (!saving && box) b.textContent = saved ? "Zona guardada para usar sin cobertura ✓" : "Guardar esta zona para usarla sin cobertura (~" + Math.max(3, Math.round(estMB(tileRanges(box)))) + " MB)";
+}
+async function saveZoneOffline() {
+  if (!App.ways || saving) return; saving = true; const b = $("#saveZone"); b.disabled = true;
+  const src = zoneCache.find(z => z.ways === App.ways.ways) || App.ways, box = src.box, id = "z" + Date.now().toString(36);
+  try {
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
+    const c = await caches.open(OFF);
+    await c.put("offline/" + id + ".json", new Response(JSON.stringify({ box, ways: src.ways.map(w => ({ type: "way", id: w.id, tags: w.tags, nodes: w.nodes, geometry: w.geometry })), places: src.places }), { headers: { "Content-Type": "application/json" } }));
+    const R = tileRanges(box), urls = tileUrls(R); let i = 0, done = 0, bytes = 0, fail = 0;
+    const worker = async () => {
+      while (i < urls.length) {
+        const u = urls[i++];
+        try {
+          if (await c.match(u, { ignoreVary: true })) { done++; continue; }
+          const seen = await caches.match(u, { ignoreVary: true }); // ya visto en el mapa: se copia tal cual
+          if (seen) { await c.put(u, seen); bytes += seen.type === "opaque" ? 60000 : (+seen.headers.get("content-length") || 60000); done++; continue; }
+          const r = await fetch(u, { mode: "cors" }); if (!r.ok) { fail++; continue; }
+          const bl = await r.blob(); bytes += bl.size; await c.put(u, new Response(bl, { headers: { "Content-Type": bl.type || "image/png" } })); done++;
+        } catch (e) { fail++; }
+        b.textContent = "Guardando el mapa… " + Math.round((done + fail) / urls.length * 100) + " %";
+      }
+    };
+    await Promise.all([1, 2, 3, 4, 5, 6].map(worker));
+    const name = muniOf((box.n + box.s) / 2, (box.w + box.e) / 2) || "Zona";
+    const idx = offIndex(); idx.unshift({ id, box, n: name, t: Date.now(), R, tiles: urls.length, fail, mb: Math.round(bytes / 1e5) / 10 }); LS.set("bb.offZones", idx);
+    toast(fail > urls.length * .1 ? "Zona guardada, pero faltan " + fail + " trozos del mapa: vuelve a intentarlo con mejor conexión" : "Zona guardada: caminos y mapa topográfico del ICGC listos para usar sin cobertura", 6000);
+  } catch (e) { console.error(e); toast("No he podido guardar la zona: " + e.message); }
+  finally { saving = false; updateSaveBtn(); renderOffZones(); }
+}
+async function deleteOffZone(id) {
+  const idx = offIndex(), z = idx.find(o => o.id === id); if (!z) return;
+  const rest = idx.filter(o => o.id !== id), keep = new Set(rest.flatMap(o => tileUrls(o.R)));
+  try { const c = await caches.open(OFF); await c.delete("offline/" + id + ".json"); for (const u of tileUrls(z.R)) if (!keep.has(u)) await c.delete(u, { ignoreVary: true }); } catch (e) { }
+  LS.set("bb.offZones", rest); renderOffZones(); updateSaveBtn(); toast("Zona borrada del móvil");
+}
+function renderOffZones() {
+  const ol = $("#offZones"); if (!ol) return; ol.innerHTML = ""; const idx = offIndex();
+  if (!idx.length) { ol.innerHTML = '<li class="hint">Ninguna. Después de «Buscar puntos», en «Cerca», pulsa «Guardar esta zona».</li>'; return; }
+  for (const z of idx) {
+    const li = document.createElement("li"); const d = new Date(z.t), old = Date.now() - z.t > 45 * 86400e3;
+    li.innerHTML = '<span class="tt"><b>' + esc(z.n) + "</b><br><small>" + d.toLocaleDateString("es-ES", { day: "numeric", month: "short" }) + " · " + fmt(z.mb, 1) + " MB" + (old ? " · caminos antiguos: vuelve a guardarla" : "") + "</small></span>";
+    const go = mkBtn("◎", () => { map.fitBounds([[z.box.s, z.box.w], [z.box.n, z.box.e]]); collapseSheet(); }); go.setAttribute("aria-label", "Ver en el mapa");
+    const del = mkBtn("×", () => { if (confirmDel(z)) deleteOffZone(z.id); }); del.setAttribute("aria-label", "Borrar");
+    li.append(go, del); ol.append(li);
+  }
+}
+// Sin conexión, el mapa topográfico se amplía desde el zoom 16 guardado en vez de pedir zooms que no hay
+function setOfflineMap(off) { const L0 = bases["Topográfico (ICGC)"]; L0.options.maxNativeZoom = off ? 16 : 19; if (map.hasLayer(L0)) L0.redraw(); }
+window.addEventListener("offline", () => { setOfflineMap(true); toast(baseName === "Topográfico (ICGC)" ? "Sin cobertura: uso lo guardado en el móvil" : "Sin cobertura: cambia al mapa «Topográfico (ICGC)», que es el que se guarda con las zonas", 6000); });
+window.addEventListener("online", () => setOfflineMap(false));
+if (navigator.onLine === false) setOfflineMap(true);
 
 /* ---------- GPS y brújula ---------- */
 let meMarker = null, accCircle = null, watchId = null, firstFix = null;
@@ -632,8 +735,10 @@ function renderForecast(days) {
 }
 function renderMeteoTable() {
   const s = SPECIES[App.prefs.sp], today = new Date();
-  const rows = Object.entries(App.summ).map(([c, m]) => { const rs = rainScore(m.rain, m.tmax, today, s); return "<tr><td>" + esc(STATIONS[c].n) + "</td><td>" + fmt(m.rain21, 0) + "</td><td>" + (m.lastRain ? m.lastRain.age + " d" : "–") + "</td><td>" + fmt(rs.R * 100) + "</td><td>" + fmt(m.tmin7, 1) + " / " + fmt(m.tmax7, 1) + "</td></tr>"; }).join("");
+  const rows = Object.entries(App.summ).filter(([c]) => STATIONS[c] && !STATIONS[c].model).map(([c, m]) => { const rs = rainScore(m.rain, m.tmax, today, s); return "<tr><td>" + esc(STATIONS[c].n) + "</td><td>" + fmt(m.rain21, 0) + "</td><td>" + (m.lastRain ? m.lastRain.age + " d" : "–") + "</td><td>" + fmt(rs.R * 100) + "</td><td>" + fmt(m.tmin7, 1) + " / " + fmt(m.tmax7, 1) + "</td></tr>"; }).join("");
   $("#meteoTable").innerHTML = "<thead><tr><th>Estación</th><th>Lluvia 21 d (mm)</th><th>Última lluvia fuerte</th><th>Lluvia útil hoy</th><th>Mín / máx 7 d</th></tr></thead><tbody>" + rows + "</tbody>";
+  const mp = Object.keys(App.raw.model || {}).length;
+  $("#fieldNote").textContent = mp ? "Además de estas estaciones, la lluvia de cada zona sale de " + mp + " puntos del modelo de Open-Meteo (uno cada ~7 km), corregidos con " + (App.raw.modelBias || 0) + " estaciones" + (App.raw.modelOld ? ". Son de la última descarga: ahora no he podido actualizarlos." : ". También uso la humedad del suelo del modelo: si se está secando, baja el índice.") : "Solo estaciones: no he podido descargar la lluvia por zona del modelo.";
 }
 
 /* ---------- Diario ---------- */
@@ -682,7 +787,7 @@ $("#importFile").onchange = async e => {
 
 /* ---------- Planear la salida (antes de salir de casa) ---------- */
 async function fetchStationsForecast() {
-  const codes = Object.keys(App.raw.stations).filter(c => STATIONS[c]);
+  const codes = Object.keys(App.raw.stations).filter(c => STATIONS[c] && !STATIONS[c].model);
   const lat = codes.map(c => STATIONS[c].lat.toFixed(3)).join(","), lon = codes.map(c => STATIONS[c].lon.toFixed(3)).join(",");
   const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon + "&daily=precipitation_sum,temperature_2m_max,temperature_2m_min&timezone=Europe%2FMadrid&forecast_days=8";
   try {
@@ -692,9 +797,11 @@ async function fetchStationsForecast() {
 }
 const avgRain = (fc, k) => { const v = Object.values(fc).map(f => (f && f.daily.precipitation_sum[k]) || 0); return v.reduce((a, b) => a + b, 0) / Math.max(1, v.length); };
 const estDrive = z => Math.round(kmDist(App.home.lat, App.home.lon, z.lat, z.lon) * 1.35 / 50 * 60 + 6);
-let planBusy = false;
+let planBusy = false, lastDrag = 0, planMark = 0; // planMark: cuándo pediste ver el plan (abrir, cambiar de día…)
+map.on("dragstart zoomstart", e => { if (e.originalEvent || e.type === "dragstart") lastDrag = Date.now(); });
 async function planInit(force) {
   if (!App.grid || !App.raw || !App.munis) return;
+  planMark = Date.now();
   if (App.plan && !force && App.plan.sp === App.prefs.sp && App.plan.kids === App.prefs.kids && App.plan.day === dayKey(new Date())) { renderPlan(); return; }
   if (planBusy) return; planBusy = true;
   $("#planMsg").textContent = "Calculando las mejores zonas para los próximos días…"; $("#zones").innerHTML = ""; $("#planDays").innerHTML = "";
@@ -720,7 +827,7 @@ function renderPlan() {
     const b = document.createElement("button"); b.type = "button"; b.className = "day"; b.setAttribute("aria-pressed", i === P.sel);
     const lv = absLevel(d.best);
     b.innerHTML = "<b>" + (i === 0 ? "Hoy" : i === 1 ? "Mañana" : esc(d.date.toLocaleDateString("es-ES", { weekday: "short", day: "numeric" }))) + '</b><i style="background:' + LV_COL[lv] + '"></i><span>' + ABS_NAMES[lv] + "</span>" + (d.rain >= 1 ? "<span>💧" + fmt(d.rain) + " mm</span>" : "");
-    b.onclick = () => { P.sel = i; renderPlan(); };
+    b.onclick = () => { P.sel = i; planMark = Date.now(); renderPlan(); };
     box.append(b);
   });
   const d = P.days[P.sel], maxD = App.prefs.maxDrive;
@@ -746,7 +853,8 @@ function renderPlan() {
     acts.append(mkBtn("Ir en coche", () => goByCar(z.lat, z.lon), "small"));
     ol.append(li);
   });
-  if (show.length && !sheet.classList.contains("collapsed")) {
+  // solo se encuadra si sigues en «Planear» y no has movido el mapa mientras se calculaba
+  if (show.length && !sheet.classList.contains("collapsed") && !$("#p-plan").hidden && lastDrag < planMark) {
     const sh = window.innerWidth >= 760 ? 0 : sheet.getBoundingClientRect().height, sw = window.innerWidth >= 760 ? 420 : 0;
     map.fitBounds(L.latLngBounds(show.map(z => [z.lat, z.lon])).pad(.15), { paddingTopLeft: [sw + 20, 70], paddingBottomRight: [60, sh + 20], maxZoom: 12 });
   }
@@ -815,7 +923,7 @@ function bindPrefs() {
     el.oninput = () => {
       App.prefs[k] = +el.value; $("#" + k + "V").textContent = SL[k](+el.value); LS.set("bb.prefs", App.prefs);
       if (k === "opacity") { if (overlay) overlay.setOpacity(App.prefs.opacity); return; }
-      if (k === "maxDrive") { renderPlan(); return; }
+      if (k === "maxDrive") { planMark = Date.now(); renderPlan(); return; }
       if (k === "carLevel" || k === "dirtMax" || k === "climbMax" || k === "minWalk") { clearTimeout(rcT); rcT = setTimeout(() => { if (App.ways) runAnalysis(false); }, 300); return; }
       clearTimeout(rcT);
       rcT = setTimeout(() => { if (HEAVY.has(k)) recompute(); else if (k === "minLevel") renderOverlay(); else if (App.ways) runAnalysis(false); }, 300);
@@ -864,13 +972,14 @@ document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
 });
 $("#grab").onclick = () => sheet.classList.contains("collapsed") ? openSheet(document.querySelector('.tabs [aria-selected="true"]').dataset.tab) : collapseSheet();
 $("#analyzeBtn").onclick = analyze;
+$("#saveZone").onclick = saveZoneOffline;
 
 /* ---------- Arranque ---------- */
 window.addEventListener("error", e => console.warn(e.message));
 (async function init() {
   $("#version").textContent = "Versión " + VERSION;
   $("#spName").textContent = SPECIES[App.prefs.sp].n;
-  bindPrefs(); renderDiary(); renderSpotList();
+  bindPrefs(); renderDiary(); renderSpotList(); renderOffZones();
   if (LS.get("bb.gpsOk", false)) startGPS(false);
   try {
     await Promise.all([loadGrid(), discoverStations().then(() => loadMeteo(false))]);
