@@ -123,3 +123,7 @@ table.meteo th{color:var(--muted);font-weight:500}
 .zone-ico{min-width:28px;height:28px;padding:0 6px;border-radius:14px;border:2px solid #fff;color:#fff;font:700 13px var(--f-data);display:grid;place-items:center;box-shadow:0 1px 4px rgba(0,0,0,.45)}
 .spots .warn{color:var(--warn-fg,#7a3410);background:var(--warn-bg,#fbeee4);border:1px solid var(--warn-line,#efc9ad);border-radius:12px;padding:10px 12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:.85rem}
 @media (prefers-color-scheme:dark){.spots .warn{--warn-fg:#f3c6a5;--warn-bg:#3a2418;--warn-line:#6b3d22}}
+.spark{display:inline-flex;gap:2px;align-items:flex-end;height:18px;margin-right:6px;vertical-align:middle}
+.spark i{display:block;width:6px;border-radius:1px;opacity:.75}
+.spark i.sel{opacity:1;outline:1.5px solid var(--ink);outline-offset:1px}
+.spot small.wk{display:flex;align-items:center;margin:2px 0}

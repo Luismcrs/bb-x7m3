@@ -1,6 +1,6 @@
 /* Bolets Bages y Berguedà · app */
 "use strict";
-const VERSION = "1.9 · 30-10-2026";
+const VERSION = "1.10 · 30-10-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -850,6 +850,9 @@ function renderPlan() {
     box.append(b);
   });
   const d = P.days[P.sel], maxD = App.prefs.maxDrive;
+  // índice de cada zona en cada día de la semana, para ver cuándo le toca a cada una
+  const qBy = {}; P.days.forEach((dd, k) => dd.zones.forEach(z => { (qBy[z.id] || (qBy[z.id] = [])).push(null); qBy[z.id][k] = z.q; }));
+  const wd = dt => dt.toLocaleDateString("es-ES", { weekday: "short", day: "numeric" });
   const zs = d.zones.map(z => Object.assign({}, z, { drive: P.drive[z.id + "@" + P.sel] ?? null, est: estDrive(z) }));
   const show = zs.filter(z => (z.drive ?? z.est) <= maxD).slice(0, 6);
   const bestDay = P.days.reduce((a, x, i) => x.best > P.days[a].best ? i : a, 0);
@@ -857,6 +860,10 @@ function renderPlan() {
   if (absLevel(d.best) <= 1) msg += " No merece mucho la pena salir.";
   if (bestDay !== P.sel && P.days[bestDay].best > d.best + 5) msg += " El mejor día de la semana es " + dayName(P.days[bestDay].date) + " (" + ABS_NAMES[absLevel(P.days[bestDay].best)].toLowerCase() + ").";
   if (P.noFc) msg += " Sin conexión con la previsión: solo puedo calcular hoy.";
+  else if (P.days.length > 1) {
+    const tops = P.days.map(x => x.zones.filter(z => estDrive(z) <= maxD).slice(0, 3).map(z => z.id).join());
+    if (tops.every(t => t === tops[0])) msg += " Esta semana las mejores zonas son las mismas todos los días: la última lluvia fue parecida en todas partes y no se esperan cambios grandes; lo que cambia es el nivel de cada día.";
+  }
   msg += show.length ? " Estas son las mejores zonas a menos de " + maxD + " min:" : " No hay zonas a menos de " + maxD + " min: sube el máximo en coche.";
   $("#planMsg").textContent = msg;
   const ol = $("#zones"); ol.innerHTML = ""; layerPlan.clearLayers();
@@ -866,7 +873,11 @@ function renderPlan() {
     const li = document.createElement("li"); li.className = "spot"; const lv = absLevel(z.q), dI = dirIdx(z.aspect);
     const drive = (z.drive != null ? z.drive : "~" + z.est) + " min en coche";
     const ha = Math.round(z.good * .071);
-    li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[lv] + '">' + (i + 1) + '</span><span class="tt"><b>' + esc(z.n) + " · " + ABS_NAMES[lv] + '</b><small><span data-zone="' + z.id + '"></span>' + esc(drive + " · mejor sitio: " + (z.slope < 6 ? "llano" : z.slope < 12 ? "suave" : "inclinado") + (z.slope >= 4 ? ", mira al " + DIRL[dI] : "") + ", " + fmtDist(z.edge) + " dentro del bosque" + (ha > 0 ? " · " + fmt(ha) + " ha de zona media o mejor" : "")) + '</small></span><span class="sc">' + fmt(z.q) + '</span></div><div class="acts"></div>';
+    // la semana de esta zona: barritas por día y su mejor día
+    const qs = qBy[z.id] || [], qmax = Math.max(...qs.map(v => v || 0)), kbest = qs.indexOf(qmax), flat = qmax - Math.min(...qs.map(v => v || 0)) < 3;
+    const spark = '<span class="spark" aria-hidden="true">' + qs.map((v, k) => '<i class="' + (k === P.sel ? "sel" : "") + '" style="height:' + Math.max(3, Math.round((v || 0) / 80 * 18)) + "px;background:" + LV_COL[absLevel(v || 0)] + '"></i>').join("") + "</span>";
+    const week = P.days.length < 2 ? "" : flat ? "igual toda la semana" : kbest === P.sel ? "★ su mejor día de la semana" : "su mejor día: " + (kbest === 0 ? "hoy" : kbest === 1 ? "mañana" : wd(P.days[kbest].date)) + " (" + fmt(qmax) + ")";
+    li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[lv] + '">' + (i + 1) + '</span><span class="tt"><b>' + esc(z.n) + " · " + ABS_NAMES[lv] + '</b><small class="wk">' + spark + esc(week) + '</small><small><span data-zone="' + z.id + '"></span>' + esc(drive + " · mejor sitio: " + (z.slope < 6 ? "llano" : z.slope < 12 ? "suave" : "inclinado") + (z.slope >= 4 ? ", mira al " + DIRL[dI] : "") + ", " + fmtDist(z.edge) + " dentro del bosque" + (ha > 0 ? " · " + fmt(ha) + " ha de zona media o mejor" : "")) + '</small></span><span class="sc">' + fmt(z.q) + '</span></div><div class="acts"></div>';
     const acts = li.querySelector(".acts");
     acts.append(mkBtn("Ver zona", () => openPlanZone(z, d.date), "primary small"));
     acts.append(mkBtn("Ir en coche", () => goByCar(z.lat, z.lon), "small"));
