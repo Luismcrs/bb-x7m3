@@ -25,6 +25,7 @@ const STATIONS = {
    3 frondosas densas, 4 bosque claro). aff: afinidad con cada especie de pino de la zona (afina dentro del pinar). */
 const SPECIES = {
   rovello:  { n: "Rovelló",       lat: "Lactarius sanguifluus", aff: { pb: 1, pn: .9, ps: .8, al: .1, ro: .1 },  cov: { dp: 1, sp: .55, db: .12, sb: .1, sc: .12 },  lc: [0, 1, .5, 0, 0],   tmin: [5, 14], tmax: [13, 23], season: ["09-15", "10-10", "11-20", "12-20"], rainMin: 15, rainFull: 70, asp: 0,   hollow: .5 },
+  pinetell: { n: "Pinetell",      lat: "Lactarius deliciosus",  aff: { pb: .7, pn: .9, ps: 1, al: .1, ro: .1 },   cov: { dp: 1, sp: .55, db: .12, sb: .1, sc: .12 },  lc: [0, 1, .5, 0, 0],   tmin: [4, 13], tmax: [11, 21], season: ["09-10", "10-05", "11-20", "12-15"], rainMin: 15, rainFull: 70, asp: .03, hollow: .5 },
   llenega:  { n: "Llenega negra", lat: "Hygrophorus latitatus", aff: { pb: .8, pn: 1, ps: .9, al: .2, ro: .2 },  cov: { dp: 1, sp: .5, db: .25, sb: .15, sc: .1 },   lc: [0, 1, .5, .2, 0],  tmin: [2, 12], tmax: [10, 20], season: ["10-01", "10-25", "12-10", "01-15"], rainMin: 15, rainFull: 70, asp: .05, hollow: .6 },
   fredolic: { n: "Fredolic",      lat: "Tricholoma terreum",    aff: { pb: .7, pn: 1, ps: 1, al: .4, ro: .5 },  cov: { dp: 1, sp: .6, db: .5, sb: .35, sc: .2 },    lc: [0, 1, .5, .7, .4], tmin: [2, 11], tmax: [9, 19],  season: ["10-10", "11-01", "12-15", "01-31"], rainMin: 15, rainFull: 65, asp: 0,   hollow: .5 },
   camagroc: { n: "Camagroc",      lat: "Craterellus lutescens", aff: { pb: .55, pn: .8, ps: 1, al: .65, ro: .6 }, cov: { dp: .85, sp: .4, db: .85, sb: .45, sc: .15 }, lc: [0, 1, .5, 1, .5], tmin: [3, 12], tmax: [9, 20],  season: ["10-05", "10-30", "01-10", "02-15"], rainMin: 25, rainFull: 90, asp: .15, hollow: 1, win: [0, 8, 12, 22, 30] }
@@ -156,21 +157,65 @@ function meteoFactors(s, m, alt, date) {
 
 /* ---------- Rejilla ---------- */
 class Grid {
-  // Se guarda en formato compacto (7 bytes por celda) para no agotar la memoria del móvil.
-  // cover1/cover2: fracciones de cada tipo de cubierta del ICGC (opcionales; sin ellas se usa el bosque total)
+  // Se guarda en formato compacto (unos 12 bytes por celda) para no agotar la memoria del móvil.
+  // Se puede construir de golpe (pruebas) o capa a capa con setForest/setElev/setCover1/setCover2, para que el
+  // móvil solo tenga una imagen descomprimida a la vez. Sin «terrain», la pendiente, la orientación y el TPI se
+  // calculan aquí a partir de la altitud (ahorra 11 MB de descarga).
   constructor(meta, terrain, forest, elev, cover1, cover2) {
-    Object.assign(this, meta); const n = meta.W * meta.H; this.n = n;
-    this.hasCover = !!(cover1 && cover2);
-    if (this.hasCover) { this.cdp = new Uint8Array(n); this.csp = new Uint8Array(n); this.cdb = new Uint8Array(n); this.csb = new Uint8Array(n); this.csc = new Uint8Array(n);
-      for (let i = 0, p = 0; i < n; i++, p += 4) { this.cdp[i] = cover1[p]; this.csp[i] = cover1[p + 1]; this.cdb[i] = cover1[p + 2]; this.csb[i] = cover2[p]; this.csc[i] = cover2[p + 1]; } }
+    Object.assign(this, meta); const n = meta.W * meta.H; this.n = n; this.hasCover = false;
     this.sl4 = new Uint8Array(n); this.asp = new Uint8Array(n); this.tpi8 = new Int8Array(n);
     this.tr8 = new Uint8Array(n); this.ed4 = new Uint8Array(n); this.flags = new Uint8Array(n); this.zz = new Uint16Array(n);
-    for (let i = 0, p = 0; i < n; i++, p += 4) {
-      this.sl4[i] = terrain[p]; this.asp[i] = terrain[p + 1]; this.tpi8[i] = terrain[p + 2] - 128;
-      this.tr8[i] = forest[p]; this.ed4[i] = forest[p + 1]; this.flags[i] = Math.round(forest[p + 2] / 80);
-      this.zz[i] = elev[p] * 256 + elev[p + 1];
-    }
     this.cosAsp = new Float32Array(256); for (let a = 0; a < 256; a++) this.cosAsp[a] = Math.cos(a / 255 * 2 * Math.PI);
+    if (forest) this.setForest(forest);
+    if (elev) this.setElev(elev);
+    if (cover1) this.setCover1(cover1);
+    if (cover2) this.setCover2(cover2);
+    if (terrain) this.setTerrain(terrain); else if (elev) this.computeTerrain();
+  }
+  setForest(f) { for (let i = 0, p = 0; i < this.n; i++, p += 4) { this.tr8[i] = f[p]; this.ed4[i] = f[p + 1]; this.flags[i] = Math.round(f[p + 2] / 80); } }
+  setElev(e) { for (let i = 0, p = 0; i < this.n; i++, p += 4) this.zz[i] = e[p] * 256 + e[p + 1]; }
+  setTerrain(t) { for (let i = 0, p = 0; i < this.n; i++, p += 4) { this.sl4[i] = t[p]; this.asp[i] = t[p + 1]; this.tpi8[i] = t[p + 2] - 128; } }
+  setCover1(c) { const n = this.n; this.cdp = new Uint8Array(n); this.csp = new Uint8Array(n); this.cdb = new Uint8Array(n); for (let i = 0, p = 0; i < n; i++, p += 4) { this.cdp[i] = c[p]; this.csp[i] = c[p + 1]; this.cdb[i] = c[p + 2]; } this.hasCover = !!this.csb; }
+  setCover2(c) { const n = this.n; this.csb = new Uint8Array(n); this.csc = new Uint8Array(n); for (let i = 0, p = 0; i < n; i++, p += 4) { this.csb[i] = c[p]; this.csc[i] = c[p + 1]; } this.hasCover = !!this.cdp; }
+  /* Relieve desde la altitud, igual que se hacía antes en el ordenador:
+     pendiente y orientación = gradiente central del modelo suavizado (gaussiana σ = 1 celda);
+     TPI = altitud − media de un rectángulo de 25 × 33 celdas (~760 × 760 m). */
+  computeTerrain() {
+    const W = this.W, H = this.H, n = this.n, z = this.zz, dy = 111320 / 3600, dx = dy * Math.cos(41.78 * Math.PI / 180);
+    const K = []; let ks = 0; for (let t = -4; t <= 4; t++) { const v = Math.exp(-t * t / 2); K.push(v); ks += v; } for (let t = 0; t < 9; t++) K[t] /= ks;
+    const refl = (i, L) => { while (i < 0 || i >= L) i = i < 0 ? -i - 1 : 2 * L - i - 1; return i; };
+    const tmp = new Float32Array(n), zs = new Float32Array(n), [k0, k1, k2, k3, k4] = [K[4], K[5], K[6], K[7], K[8]];
+    for (let i = 0; i < H; i++) { // pasada horizontal (bordes con reflejo, interior sin comprobaciones)
+      const o = i * W;
+      for (let j = 0; j < W; j++) {
+        if (j >= 4 && j < W - 4) { const q = o + j; tmp[q] = k0 * z[q] + k1 * (z[q - 1] + z[q + 1]) + k2 * (z[q - 2] + z[q + 2]) + k3 * (z[q - 3] + z[q + 3]) + k4 * (z[q - 4] + z[q + 4]); continue; }
+        let v = 0; for (let t = -4; t <= 4; t++) v += K[t + 4] * z[o + refl(j + t, W)]; tmp[o + j] = v;
+      }
+    }
+    for (let i = 0; i < H; i++) { // pasada vertical
+      const o = i * W, inner = i >= 4 && i < H - 4, W2 = 2 * W, W3 = 3 * W, W4 = 4 * W;
+      for (let j = 0; j < W; j++) {
+        const q = o + j;
+        if (inner) { zs[q] = k0 * tmp[q] + k1 * (tmp[q - W] + tmp[q + W]) + k2 * (tmp[q - W2] + tmp[q + W2]) + k3 * (tmp[q - W3] + tmp[q + W3]) + k4 * (tmp[q - W4] + tmp[q + W4]); continue; }
+        let v = 0; for (let t = -4; t <= 4; t++) v += K[t + 4] * tmp[refl(i + t, H) * W + j]; zs[q] = v;
+      }
+    }
+    const R2D = 180 / Math.PI;
+    for (let i = 0; i < H; i++) for (let j = 0; j < W; j++) {
+      const k = i * W + j;
+      const ddx = j === 0 ? zs[k + 1] - zs[k] : j === W - 1 ? zs[k] - zs[k - 1] : (zs[k + 1] - zs[k - 1]) / 2;
+      const ddy = i === 0 ? zs[k + W] - zs[k] : i === H - 1 ? zs[k] - zs[k - W] : (zs[k + W] - zs[k - W]) / 2;
+      const gx = ddx / dx, gy = -ddy / dy, sl = Math.atan(Math.sqrt(gx * gx + gy * gy)) * R2D;
+      this.sl4[k] = sl >= 63.75 ? 255 : Math.round(sl * 4);
+      let a = Math.atan2(-gx, -gy) * R2D; if (a < 0) a += 360;
+      this.asp[k] = Math.round(a / 360 * 255) % 256;
+    }
+    // media móvil 25 × 33 con el borde repetido (como «nearest»)
+    const RY = 12, RX = 16;
+    for (let i = 0; i < H; i++) { const o = i * W; let s = 0; for (let t = -RX; t <= RX; t++) s += z[o + clamp(t, 0, W - 1)];
+      for (let j = 0; j < W; j++) { tmp[o + j] = s; s += z[o + Math.min(W - 1, j + RX + 1)] - z[o + Math.max(0, j - RX)]; } }
+    for (let j = 0; j < W; j++) { let s = 0; for (let t = -RY; t <= RY; t++) s += tmp[clamp(t, 0, H - 1) * W + j];
+      for (let i = 0; i < H; i++) { const k = i * W + j; this.tpi8[k] = clamp(Math.round(z[k] - s / ((2 * RX + 1) * (2 * RY + 1))), -128, 127); s += tmp[Math.min(H - 1, i + RY + 1) * W + j] - tmp[Math.max(0, i - RY) * W + j]; } }
   }
   slope(k) { return this.sl4[k] / 4; } aspect(k) { return this.asp[k] / 255 * 360; } tpi(k) { return this.tpi8[k]; }
   tree(k) { return this.tr8[k] / 255; } edge(k) { return this.ed4[k] * 4; } z(k) { return this.zz[k]; }

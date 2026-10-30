@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-<title>Bolets Bages</title>
-<meta name="description" content="Dónde buscar setas en el Bages: probabilidad calculada con meteo en directo, relieve y bosque real, con GPS.">
+<title>Bolets Bages y Berguedà</title>
+<meta name="description" content="Dónde buscar setas en el Bages y el Berguedà: probabilidad calculada con meteo en directo, relieve y bosque real, con GPS.">
 <meta name="theme-color" content="#1f2a22">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -49,7 +49,7 @@
     <div class="days" id="planDays" role="group" aria-label="Día de la salida"></div>
     <p id="planMsg" class="fc-text">Calculando las mejores zonas…</p>
     <ol id="zones" class="spots"></ol>
-    <div class="slider"><label for="maxDrive">Máximo en coche desde casa</label><input type="range" id="maxDrive" min="10" max="90" step="5"><output id="maxDriveV"></output></div>
+    <div class="slider"><label for="maxDrive">Máximo en coche desde casa</label><input type="range" id="maxDrive" min="10" max="120" step="5"><output id="maxDriveV"></output></div>
     <p class="hint"><span id="planFrom"></span> <button id="homeHere" class="linkbtn" type="button">Usar mi posición como casa</button></p>
   </div>
 
@@ -70,7 +70,7 @@
   <div class="panel" id="p-diario" role="tabpanel" hidden>
     <button id="addFind" class="btn primary wide" type="button">Apuntar un hallazgo aquí</button>
     <form id="findForm" class="findform" hidden>
-      <label>Seta <select id="fSp"><option value="rovello">Rovelló</option><option value="llenega">Llenega negra</option><option value="fredolic">Fredolic</option><option value="camagroc">Camagroc</option><option value="molsa">Molsa</option><option value="ceps">Cep</option><option value="otra">Otra</option><option value="nada">Nada (zona vacía)</option></select></label>
+      <label>Seta <select id="fSp"><option value="rovello">Rovelló</option><option value="pinetell">Pinetell</option><option value="llenega">Llenega negra</option><option value="fredolic">Fredolic</option><option value="camagroc">Camagroc</option><option value="molsa">Molsa</option><option value="ceps">Cep</option><option value="otra">Otra</option><option value="nada">Nada (zona vacía)</option></select></label>
       <label>Cantidad <select id="fQty"><option value="1">Pocas</option><option value="2" selected>Bastantes</option><option value="3">Muchas</option><option value="0">Ninguna</option></select></label>
       <label class="full">Nota <input id="fNote" type="text" maxlength="200" placeholder="Bajo pinos jóvenes, junto a la pista…"></label>
       <p class="hint full" id="fWhere"></p>
@@ -104,7 +104,7 @@
     <div class="slider"><label for="opacity">Opacidad de la capa</label><input type="range" id="opacity" min="0.2" max="1" step="0.05"><output id="opacityV"></output></div>
     <div class="row"><button id="resetPrefs" class="btn" type="button">Valores por defecto</button><button id="refreshMeteo" class="btn" type="button">Actualizar meteo</button></div>
     <details class="about"><summary>Cómo funciona</summary>
-      <p>Cada cuadrito de unos 30 m recibe un <b>índice de 0 a 100</b>. No es un porcentaje de probabilidad, sino una nota:</p>
+      <p>Cubre el Bages y el Berguedà. Cada cuadrito de unos 30 m recibe un <b>índice de 0 a 100</b>. No es un porcentaje de probabilidad, sino una nota:</p>
       <ul>
         <li><b>60 o más:</b> muy alta.</li>
         <li><b>45–60:</b> alta.</li>
@@ -121,7 +121,7 @@
         <li>Lo lejos que estás del borde del bosque.</li>
         <li>La pendiente, la orientación y las vaguadas.</li>
       </ul>
-      <p>Los <b>colores del mapa</b> son relativos: marcan el 3 %, el 10 % y el 25 % mejor del bosque del Bages en ese día. Un día malo también hay rojo, así que mira el nivel en la parte inferior.</p>
+      <p>Los <b>colores del mapa</b> son relativos: marcan el 3 %, el 10 % y el 25 % mejor del bosque del Bages y el Berguedà en ese día. Un día malo también hay rojo, así que mira el nivel en la parte inferior.</p>
       <p>«Buscar puntos» descarga los caminos de OpenStreetMap de la zona que ves y calcula:</p>
       <ul>
         <li>Dónde puedes dejar el coche, según los caminos que aceptas.</li>
@@ -131,7 +131,7 @@
       </ul>
       <p>La guía a pie sigue esa ruta.</p>
       <p><b>Afluencia probable.</b> No hay datos reales de cuánta gente busca setas en cada sitio. La app la estima con lo que suele atraer a la gente: estar cerca del asfalto o del coche, cerca de pueblos o urbanizaciones, o en una zona con muchos caminos. Con «Evitar donde va todo el mundo» penaliza esas zonas y exige andar un mínimo.</p>
-      <p>Datos: Meteocat (XEMA, datos abiertos de la Generalitat), Open-Meteo, Copernicus DEM, ICGC (cubiertas del suelo 2024, CC BY 4.0), OpenStreetMap. Es una estimación, no una garantía. Respeta los carteles, las fincas privadas y las batidas de caza.</p>
+      <p>Datos: Meteocat (XEMA, datos abiertos de la Generalitat), Open-Meteo, ICGC (modelo del terreno y cubiertas del suelo 2024, CC BY 4.0), OpenStreetMap. Es una estimación, no una garantía. Respeta los carteles, las fincas privadas y las batidas de caza.</p>
       <p id="version" class="hint"></p>
     </details>
   </div>

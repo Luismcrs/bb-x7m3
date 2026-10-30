@@ -1,9 +1,9 @@
 /* Bolets Bages · funcionamiento sin conexión */
-const V = "bb-v7";
+const V = "bb-v8";
 const SHELL = ["./", "index.html", "app.css", "app.js", "model.js", "manifest.webmanifest", "vendor/leaflet.js", "vendor/leaflet.css",
   "vendor/images/layers.png", "vendor/images/layers-2x.png", "vendor/images/marker-icon.png", "vendor/images/marker-shadow.png",
-  "icons/icon-192.png", "icons/icon-512.png", "data/meta.json", "data/terrain.png", "data/forest.png", "data/elev.png", "data/meteo-fallback.json", "data/munis.png", "data/munis.json", "data/cover1.png", "data/cover2.png",
-  ...[0, 1, 2].flatMap(r => [0, 1, 2, 3].map(c => "data/lc/" + r + "_" + c + ".png"))];
+  "icons/icon-192.png", "icons/icon-512.png", "data/meta.json", "data/forest.png", "data/elev.png", "data/meteo-fallback.json", "data/munis.png", "data/munis.json", "data/cover1.png", "data/cover2.png",
+  ...[0, 1, 2, 3, 4, 5].flatMap(r => [0, 1, 2, 3].map(c => "data/lc/" + r + "_" + c + ".png"))];
 const TILE_HOSTS = /(geoserveis\.icgc\.cat|tile\.opentopomap\.org|server\.arcgisonline\.com|tile\.openstreetmap\.org)/;
 const MAX_TILES = 3000;
 
