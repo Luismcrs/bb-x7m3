@@ -6,7 +6,7 @@ App web personal para buscar setas en el Bages y el Berguedà. Calcula en el mó
 - el modelo del terreno del ICGC (MET);
 - los pinares por especie del Mapa Forestal de España (MITECO);
 - el mapa de cubiertas del suelo del ICGC (2024, detalle de 1 m, CC BY 4.0): dónde hay pinar, encinar o matorral de verdad, y por dónde se puede andar;
-- los caminos de OpenStreetMap, y también sus vías de tren, ríos, autovías, vallas y cortados: la ruta a pie desde el coche no los cruza salvo por un paso.
+- los caminos de OpenStreetMap (preparados cada mes desde el extracto de Geofabrik, en data/osm2), y también sus vías de tren, ríos, autovías, vallas y cortados: la ruta a pie desde el coche no los cruza salvo por un paso.
 
 Se puede guardar una zona (caminos y mapa del ICGC) para usarla sin cobertura.
 

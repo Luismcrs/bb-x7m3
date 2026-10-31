@@ -1,6 +1,6 @@
 /* Bolets Bages y Berguedà · app */
 "use strict";
-const VERSION = "1.14 · 30-10-2026";
+const VERSION = "1.15 · 1-11-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -264,11 +264,11 @@ function meteoStatus() {
 /* ---------- Puntos con caminos reales (Overpass) ---------- */
 const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter"];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-/* Caminos de OpenStreetMap ya preparados en teselas (data/osm/, se renuevan cada mes con GitHub Actions):
+/* Caminos de OpenStreetMap ya preparados en teselas (data/osm2/, se renuevan cada mes con GitHub Actions):
    la búsqueda no depende de los servidores públicos de Overpass, que se saturan a menudo. */
 let osmIndex = null;
 async function staticZone(box, status) {
-  if (!osmIndex) { const r = await fetch("data/osm/index.json", { cache: "no-cache" }); if (!r.ok) throw new Error("sin teselas"); osmIndex = await r.json(); }
+  if (!osmIndex) { const r = await fetch("data/osm2/index.json", { cache: "no-cache" }); if (!r.ok) throw new Error("sin teselas"); osmIndex = await r.json(); }
   const I = osmIndex, M = .02, need = [], have = new Map(I.tiles.map(t => [t[0] + "_" + t[1], t[2] || I.generated]));
   const bx = { s: box.s - M, n: box.n + M, w: box.w - M * 1.3, e: box.e + M * 1.3 };
   for (let r = Math.max(0, Math.floor((bx.s - I.s) / I.dlat)); r <= Math.min(I.rows - 1, Math.floor((bx.n - I.s) / I.dlat)); r++)
@@ -277,9 +277,16 @@ async function staticZone(box, status) {
   if (!need.length || need.some(k => !have.has(k))) { osmIndex = null; throw new Error("faltan teselas"); }
   const ways = new Map(), places = []; let done = 0;
   await Promise.all(need.map(async k => {
-    const r = await fetch("data/osm/" + k + ".json?v=" + have.get(k)); if (!r.ok) throw new Error("tesela " + k);
+    const r = await fetch("data/osm2/" + k + ".json?v=" + have.get(k)); if (!r.ok) throw new Error("tesela " + k);
     const t = await r.json();
-    for (const [id, tags, nodes, g] of t.w) if (!ways.has(id)) { const geometry = []; for (let i = 0; i < g.length; i += 2) geometry.push({ lat: g[i], lon: g[i + 1] }); ways.set(id, { type: "way", id, tags, nodes, geometry }); }
+    const f2 = I.f === 2; // formato compacto: nodos y coordenadas (en 1e-5 grados) como diferencias
+    for (const [id, tags, nd, g] of t.w) {
+      if (ways.has(id)) continue;
+      const geometry = [], nodes = f2 ? [] : nd;
+      if (f2) { let a = 0; for (const v of nd) nodes.push(a += v); let la = 0, lo = 0; for (let i = 0; i < g.length; i += 2) { la += g[i]; lo += g[i + 1]; geometry.push({ lat: la / 1e5, lon: lo / 1e5 }); } }
+      else for (let i = 0; i < g.length; i += 2) geometry.push({ lat: g[i], lon: g[i + 1] });
+      ways.set(id, { type: "way", id, tags, nodes, geometry });
+    }
     for (const [lat, lon, n, peak] of t.p) places.push({ lat, lon, n, peak: !!peak });
     status("Cargando caminos… " + (++done) + "/" + need.length);
   }));
