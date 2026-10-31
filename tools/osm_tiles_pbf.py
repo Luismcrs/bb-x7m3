@@ -1,13 +1,13 @@
 """Caminos de OpenStreetMap del Bages y el Berguedà en teselas estáticas (data/osm/), a partir del extracto de
 Cataluña de Geofabrik (pensado para descargas grandes; no depende de los servidores de Overpass).
-Mismo formato y mismos filtros que la consulta de la app:
-cada tesela {"w": [[id, tags, nodos, [lat, lon, ...]], ...], "p": [[lat, lon, nombre, cima], ...]}."""
+Mismos filtros que la consulta de la app. Formato 2 (compacto): cada tesela {"w": [[id, tags, nodos, coords], ...], "p": [...]},
+con los nodos como diferencias entre ids seguidos y las coordenadas en cienmilésimas de grado (~1 m), también como diferencias."""
 import json, os, re, time, math, urllib.request, subprocess, sys
 import osmium
 S0, N0, W0, E0 = 41.55, 42.37, 1.50, 2.12
 DLAT, DLON = 0.06, 0.08
 ROWS, COLS = math.ceil(round((N0 - S0) / DLAT, 6)), math.ceil(round((E0 - W0) / DLON, 6))
-HERE = os.path.dirname(os.path.abspath(__file__)); OUT = os.path.join(HERE, '..', 'data', 'osm')
+HERE = os.path.dirname(os.path.abspath(__file__)); OUT = os.path.join(HERE, '..', 'data', 'osm2')  # formato 2; las versiones viejas de la app leen data/osm
 PBF_URL = 'https://download.geofabrik.de/europe/spain/cataluna-latest.osm.pbf'
 KEEP = {'highway', 'tracktype', 'surface', 'smoothness', 'access', 'motor_vehicle', 'motorcar', 'vehicle', '4wd_only', 'foot', 'bridge',
         'tunnel', 'ford', 'railway', 'waterway', 'barrier', 'natural', 'name', 'service', 'layer', 'rack'}
@@ -44,7 +44,10 @@ class H(osmium.SimpleHandler):
         if len(pts) < 2: return
         las = [p[0] for p in pts]; los = [p[1] for p in pts]
         if max(las) < S0 or min(las) > N0 or max(los) < W0 or min(los) > E0: return
-        rec = [w.id, {k: v for k, v in t.items() if k in KEEP}, [n.ref for n in w.nodes], [round(x, 6) for p in pts for x in p]]
+        refs = [n.ref for n in w.nodes]; q = [(round(a * 1e5), round(b * 1e5)) for a, b in pts]
+        nd = [refs[0]] + [refs[i] - refs[i - 1] for i in range(1, len(refs))]
+        cd = [q[0][0], q[0][1]] + [v for i in range(1, len(q)) for v in (q[i][0] - q[i - 1][0], q[i][1] - q[i - 1][1])]
+        rec = [w.id, {k: v for k, v in t.items() if k in KEEP}, nd, cd]
         for rc in tile_range(min(las), max(las), min(los), max(los)): tiles[rc]['w'].append(rec)
         self.nw += 1
 t0 = time.time()
@@ -60,6 +63,6 @@ for (r, c), d in sorted(tiles.items()):
     p = os.path.join(OUT, f'{r}_{c}.json')
     with open(p, 'w') as f: json.dump(d, f, ensure_ascii=False, separators=(',', ':'))
     total += os.path.getsize(p); idx.append([r, c, today])
-json.dump({'s': S0, 'w': W0, 'dlat': DLAT, 'dlon': DLON, 'rows': ROWS, 'cols': COLS, 'tiles': idx, 'generated': today,
+json.dump({'f': 2, 's': S0, 'w': W0, 'dlat': DLAT, 'dlon': DLON, 'rows': ROWS, 'cols': COLS, 'tiles': idx, 'generated': today,
            'source': '© OpenStreetMap contributors (ODbL), extracto de Geofabrik'}, open(os.path.join(OUT, 'index.json'), 'w'))
 print('hecho', len(idx), 'teselas,', total // 1024 // 1024, 'MB', f'{time.time() - t0:.0f} s')
