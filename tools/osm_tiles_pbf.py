@@ -10,7 +10,8 @@ ROWS, COLS = math.ceil(round((N0 - S0) / DLAT, 6)), math.ceil(round((E0 - W0) / 
 HERE = os.path.dirname(os.path.abspath(__file__)); OUT = os.path.join(HERE, '..', 'data', 'osm2')  # formato 2; las versiones viejas de la app leen data/osm
 PBF_URL = 'https://download.geofabrik.de/europe/spain/cataluna-latest.osm.pbf'
 KEEP = {'highway', 'tracktype', 'surface', 'smoothness', 'access', 'motor_vehicle', 'motorcar', 'vehicle', '4wd_only', 'foot', 'bridge',
-        'tunnel', 'ford', 'railway', 'waterway', 'barrier', 'natural', 'name', 'service', 'layer', 'rack'}
+        'tunnel', 'ford', 'railway', 'waterway', 'barrier', 'natural', 'name', 'service', 'layer', 'rack',
+        'maxspeed', 'oneway', 'junction'}  # estos tres, para el tiempo en coche (tools/drive_graph.py)
 HW_NO = re.compile(r'^(proposed|construction|platform|corridor|elevator|bus_stop|raceway|abandoned|razed|services|rest_area)$')
 RAIL = re.compile(r'^(rail|narrow_gauge|light_rail|funicular|monorail|preserved|subway|tram)$')
 PLACE = re.compile(r'^(village|hamlet|isolated_dwelling|farm|locality|neighbourhood|town)$')
