@@ -1,6 +1,6 @@
 /* Bolets Bages y Berguedà · app */
 "use strict";
-const VERSION = "1.16 · 1-11-2026";
+const VERSION = "1.17 · 1-11-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -100,10 +100,48 @@ function carDist(i, j) {
 /* «Planear» solo cuenta los sitios a los que llegas: a menos del 80 % de tu máximo andando (en línea recta) de donde
    deja el coche tu coche y, con niños, en terreno suave. El índice de cada sitio no cambia. */
 function planReach() {
-  const p = App.prefs, pr = profileOf(p), g = App.grid, lim = p.walkMax * .8, sl = pr.spotSlope * 4;
-  return (i, j, k) => { if (g.sl4[k] > sl) return false; const d = carDist(i, j); return d == null || d <= lim; };
+  const p = App.prefs, pr = profileOf(p), g = App.grid, lim = p.walkMax * .8, sl = pr.spotSlope * 4, RG = reachGrid();
+  return (i, j, k) => {
+    if (g.sl4[k] > sl) return false;
+    if (RG) return RG.d[Math.floor(i / 3) * RG.w + Math.floor(j / 3)] <= lim; // con la red de carreteras: tu coche, sus pistas y su máximo de tierra
+    const d = carDist(i, j); return d == null || d <= lim;
+  };
 }
-const planSig = () => [App.prefs.sp, App.prefs.profile, App.prefs.walkMax, App.prefs.carLevel, App.road ? 1 : 0].join();
+/* Con la red de carreteras: distancia desde cada celda de 90 m (las que usa «Planear») a donde llega tu coche.
+   La celda (a, b) es la de 30 m (3a, 3b): se usa una rejilla desplazada media celda de 30 m para que coincidan. */
+function reachGrid() {
+  const D = driveD(); if (!D) return null; if (App.reachG && App.reachG.key === D.key) return App.reachG;
+  const g = App.grid, w = Math.floor(g.W / 3), h = Math.floor(g.H / 3);
+  const gr = { lat0: g.lat0 + g.dlat * (.5 - 1.5), lon0: g.lon0 + g.dlon * (.5 - 1.5), dlat: g.dlat * 3, dlon: g.dlon * 3, w, h };
+  return App.reachG = { key: D.key, w, d: reachRaster(App.driveG, D, gr) };
+}
+/* Red de carreteras y pistas para el tiempo en coche (data/drive.bin.gz, unos 1,3 MB): se descarga la primera vez que
+   abres «Planear» y luego queda guardada. */
+async function loadDrive() {
+  if (App.driveG) return App.driveG;
+  try {
+    const r = await fetch("data/drive.bin.gz"); if (!r.ok) throw new Error("HTTP " + r.status);
+    let buf = await r.arrayBuffer(); const b = new Uint8Array(buf, 0, 2);
+    if (b[0] === 0x1f && b[1] === 0x8b) { // si el servidor no lo ha descomprimido ya
+      if (!("DecompressionStream" in window)) throw new Error("el navegador no descomprime");
+      buf = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+    }
+    App.driveG = parseDrive(buf); return App.driveG;
+  } catch (e) { console.warn("red en coche", e); return null; }
+}
+// tiempos desde casa con tu coche (se recalculan si cambias de casa o de coche; unas décimas de segundo)
+function driveD() {
+  const G = App.driveG; if (!G) return null;
+  const key = App.home.lat + "," + App.home.lon + "," + App.prefs.carLevel;
+  if (!App.driveD || App.driveD.key !== key) { const D = driveFrom(G, App.home.lat, App.home.lon, App.prefs.carLevel); App.driveD = D && D.startDist < 3000 ? Object.assign(D, { key }) : { key, none: true }; }
+  return App.driveD.none ? null : App.driveD;
+}
+// minutos en coche hasta donde mejor te queda aparcar para el mejor sitio de una zona (null: sin red; none: no llegas)
+function zoneCar(P, z, k) {
+  const D = driveD(); if (!D) return null; const key = z.id + "@" + k; if (P.car[key]) return P.car[key];
+  return P.car[key] = driveTo(App.driveG, D, z.lat, z.lon, App.prefs.walkMax * .8 + 150) || { none: true };
+}
+const planSig = () => [App.prefs.sp, App.prefs.profile, App.prefs.walkMax, App.prefs.carLevel, App.home.lat, App.home.lon, App.road ? 1 : 0, App.driveG ? 1 : 0].join();
 // El relieve calculado se guarda en el móvil (unos 16 MB) para no recalcularlo cada vez que abres la app
 const terrKey = g => "derived/terrain-" + g.W + "x" + g.H + "-" + g.lat0 + "-" + g.lon0;
 async function loadTerrainCache(g) {
@@ -554,11 +592,17 @@ async function goByCar(lat, lon) {
   // camino más cercano con coche: de la última búsqueda, o del enrutador OSRM
   let park = null;
   if (App.net && App.ways) { const p = nearestParking(lat, lon, App.net); if (p && p.dist < 2000) park = p; }
+  if (!park) { const D = driveD(); const p = D && driveTo(App.driveG, D, lat, lon, 2000); if (p) park = { lat: p.lat, lon: p.lon, dist: p.walk }; }
   if (!park) {
     try { const r = await fetchJSON("https://router.project-osrm.org/nearest/v1/driving/" + lon.toFixed(5) + "," + lat.toFixed(5), 12000); const w = r.waypoints && r.waypoints[0]; if (w) park = { lat: w.location[1], lon: w.location[0], dist: w.distance }; } catch (e) { }
   }
   if (park) { toast("Te llevo al camino más cercano: luego " + fmtDist(park.dist * 1.3) + " andando"); window.open(carUrl(park.lat, park.lon), "_blank"); }
   else window.open(carUrl(lat, lon), "_blank");
+}
+// «Ir en coche» de una zona de «Planear»: al mismo sitio para el que se ha calculado el tiempo
+function goToPark(c) {
+  toast("Te llevo a donde aparcar (unos " + c.min + " min desde casa): luego ~" + fmtDist(c.walk * 1.3) + " andando");
+  window.open(carUrl(c.lat, c.lon), "_blank");
 }
 function nearestOnSegmentsApp(lat, lon, segs) {
   const cx = Math.cos(lat * Math.PI / 180) * 111320, cy = 110540; let best = null, bd = 1e12;
@@ -889,7 +933,7 @@ async function planInit(force) {
   if (planBusy) return; planBusy = true;
   $("#planMsg").textContent = "Calculando las mejores zonas para los próximos días…"; $("#zones").innerHTML = ""; $("#planDays").innerHTML = "";
   try {
-    await loadRoad();
+    await loadRoad(); await loadDrive();
     // si solo han cambiado tus ajustes (no el día), se aprovecha la previsión ya descargada
     const old = App.plan && !force && App.plan.day === dayKey(new Date()) ? App.plan : null;
     const fc = old ? old.fc : await fetchStationsForecast();
@@ -900,7 +944,7 @@ async function planInit(force) {
       days.push({ date, zones, best: zones.length ? zones[0].q : 0, rain: fc ? avgRain(fc, k) : 0 });
       await new Promise(r => setTimeout(r, 0));
     }
-    App.plan = { days, ext, fc, sel: App.plan ? Math.min(App.plan.sel, N - 1) : 0, sig: planSig(), day: dayKey(today), noFc: !fc, drive: {} };
+    App.plan = { days, ext, fc, sel: App.plan ? Math.min(App.plan.sel, N - 1) : 0, sig: planSig(), day: dayKey(today), noFc: !fc, drive: {}, car: {} };
     renderPlan();
   } catch (e) { console.error(e); $("#planMsg").textContent = "No he podido calcular el plan. Prueba otra vez en un momento."; }
   finally { planBusy = false; }
@@ -920,7 +964,10 @@ function renderPlan() {
   // índice de cada zona en cada día de la semana, para ver cuándo le toca a cada una
   const qBy = {}; P.days.forEach((dd, k) => dd.zones.forEach(z => { (qBy[z.id] || (qBy[z.id] = [])).push(null); qBy[z.id][k] = z.q; }));
   const wd = dt => dt.toLocaleDateString("es-ES", { weekday: "short", day: "numeric" });
-  const zs = d.zones.map(z => Object.assign({}, z, { drive: P.drive[z.id + "@" + P.sel] ?? null, est: estDrive(z) }));
+  // tiempo en coche de todas las zonas con la red de carreteras (si no se puede, estimación y OSRM para las que se ven)
+  const useG = !!driveD();
+  const carMin = (z, k) => { const c = zoneCar(P, z, k); return c ? (c.none ? Infinity : c.min) : (P.drive[z.id + "@" + k] ?? estDrive(z)); };
+  const zs = d.zones.map(z => Object.assign({}, z, { car: useG ? zoneCar(P, z, P.sel) : null, drive: useG ? carMin(z, P.sel) : P.drive[z.id + "@" + P.sel] ?? null, est: estDrive(z) }));
   const show = zs.filter(z => (z.drive ?? z.est) <= maxD).slice(0, 6);
   const bestDay = P.days.reduce((a, x, i) => x.best > P.days[a].best ? i : a, 0);
   let msg = "Para " + dayName(d.date) + ", lo mejor de la zona tiene probabilidad " + ABS_NAMES[absLevel(d.best)].toLowerCase() + " (índice " + fmt(d.best) + ").";
@@ -928,7 +975,7 @@ function renderPlan() {
   if (bestDay !== P.sel && P.days[bestDay].best > d.best + 5) msg += " El mejor día de la semana es " + dayName(P.days[bestDay].date) + " (" + ABS_NAMES[absLevel(P.days[bestDay].best)].toLowerCase() + ").";
   if (P.noFc) msg += " Sin conexión con la previsión: solo puedo calcular hoy.";
   else if (P.days.length > 1) {
-    const tops = P.days.map(x => x.zones.filter(z => estDrive(z) <= maxD).slice(0, 3).map(z => z.id).join());
+    const tops = P.days.map((x, k) => x.zones.filter(z => carMin(z, k) <= maxD).slice(0, 3).map(z => z.id).join());
     if (tops.every(t => t === tops[0])) msg += " Esta semana las mejores zonas son las mismas todos los días: la última lluvia fue parecida en todas partes y no se esperan cambios grandes; lo que cambia es el nivel de cada día.";
   }
   const reachTxt = " (cuentan los sitios a los que llegas: " + ["coche solo por asfalto", "coche por pistas buenas", "coche por pistas normales", "todoterreno"][App.prefs.carLevel] + " y hasta " + fmtDist(App.prefs.walkMax) + " andando" + (profileOf(App.prefs) === PROFILES.ninos ? ", en terreno suave" : "") + ")";
@@ -939,17 +986,17 @@ function renderPlan() {
     L.marker([z.lat, z.lon], { icon: L.divIcon({ className: "", html: '<div class="zone-ico" style="background:' + LV_COL[absLevel(z.q)] + '">' + (i + 1) + "</div>", iconSize: [28, 28], iconAnchor: [14, 14] }) })
       .bindTooltip(z.n + " · " + ABS_NAMES[absLevel(z.q)]).on("click", () => openPlanZone(z, d.date)).addTo(layerPlan);
     const li = document.createElement("li"); li.className = "spot"; const lv = absLevel(z.q), dI = dirIdx(z.aspect);
-    const drive = (z.drive != null ? z.drive : "~" + z.est) + " min en coche";
+    const drive = (z.drive != null ? z.drive : "~" + z.est) + " min en coche desde casa";
     const ha = Math.round(z.good * .071);
     // la semana de esta zona: barritas por día y su mejor día
     const qs = qBy[z.id] || [], qmax = Math.max(...qs.map(v => v || 0)), kbest = qs.indexOf(qmax), flat = qmax - Math.min(...qs.map(v => v || 0)) < 3;
     const spark = '<span class="spark" aria-hidden="true">' + qs.map((v, k) => '<i class="' + (k === P.sel ? "sel" : "") + '" style="height:' + Math.max(3, Math.round((v || 0) / 80 * 18)) + "px;background:" + LV_COL[absLevel(v || 0)] + '"></i>').join("") + "</span>";
     const week = P.days.length < 2 ? "" : flat ? "igual toda la semana" : kbest === P.sel ? "★ su mejor día de la semana" : "su mejor día: " + (kbest === 0 ? "hoy" : kbest === 1 ? "mañana" : wd(P.days[kbest].date)) + " (" + fmt(qmax) + ")";
-    const cd = carDist(z.i, z.j), near = cd == null ? "" : cd < 60 ? ", junto a donde dejar el coche" : ", a ~" + fmtDist(cd) + " en línea recta del coche";
+    const cd = z.car && !z.car.none ? z.car.walk : carDist(z.i, z.j), near = cd == null ? "" : cd < 60 ? ", junto a donde dejar el coche" : ", a ~" + fmtDist(cd) + " en línea recta de donde aparcas";
     li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[lv] + '">' + (i + 1) + '</span><span class="tt"><b>' + esc(z.n) + " · " + ABS_NAMES[lv] + '</b><small class="wk">' + spark + esc(week) + '</small><small><span data-zone="' + z.id + '"></span>' + esc(drive + " · mejor sitio: " + (z.slope < 6 ? "llano" : z.slope < 12 ? "suave" : "inclinado") + (z.slope >= 4 ? ", mira al " + DIRL[dI] : "") + ", " + fmtDist(z.edge) + " dentro del bosque" + near + (ha > 0 ? " · " + fmt(ha) + " ha de zona media o mejor a tu alcance" : "")) + '</small></span><span class="sc">' + fmt(z.q) + '</span></div><div class="acts"></div>';
     const acts = li.querySelector(".acts");
     acts.append(mkBtn("Ver zona", () => openPlanZone(z, d.date), "primary small"));
-    acts.append(mkBtn("Ir en coche", () => goByCar(z.lat, z.lon), "small"));
+    acts.append(mkBtn("Ir en coche", () => z.car && !z.car.none ? goToPark(z.car) : goByCar(z.lat, z.lon), "small"));
     ol.append(li);
   });
   // solo se encuadra si sigues en «Planear» y no has movido el mapa mientras se calculaba
@@ -957,7 +1004,7 @@ function renderPlan() {
     const sh = window.innerWidth >= 760 ? 0 : sheet.getBoundingClientRect().height, sw = window.innerWidth >= 760 ? 420 : 0;
     map.fitBounds(L.latLngBounds(show.map(z => [z.lat, z.lon])).pad(.15), { paddingTopLeft: [sw + 20, 70], paddingBottomRight: [60, sh + 20], maxZoom: 12 });
   }
-  driveTimes(show, P.sel); fillZonePlaces(show);
+  if (!useG) driveTimes(show, P.sel); fillZonePlaces(show);
 }
 const geoCache = LS.get("bb.geo", {});
 let geoQ = Promise.resolve();
@@ -1010,7 +1057,7 @@ function openPlanZone(z, date) {
 $("#homeHere").onclick = () => {
   if (!App.me) { startGPS(false); toast("Buscando tu posición… vuelve a pulsar cuando aparezca el punto azul"); return; }
   App.home = { lat: App.me.lat, lon: App.me.lon, n: "tu casa (guardada)" }; LS.set("bb.home", App.home);
-  if (App.plan) App.plan.drive = {}; renderPlan(); toast("Casa guardada");
+  if (App.plan) { App.plan.drive = {}; App.plan.car = {}; } renderPlan(); toast("Casa guardada");
 };
 
 /* ---------- Ajustes ----------

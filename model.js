@@ -393,6 +393,80 @@ function extendStations(raw, fc, todayKey) {
   return Object.assign({}, raw, { stations: st });
 }
 
+/* ---------- Tiempo en coche desde casa (para «Planear») ----------
+   Red de carreteras y pistas de OpenStreetMap ya preparada (data/drive.bin.gz, ver tools/drive_graph.py), con
+   velocidades parecidas a las de Google Maps. Se calcula una vez el tiempo desde casa a todos los cruces (Dijkstra) y
+   cada zona toma el punto de la red donde mejor te queda aparcar: el que suma menos coche + andar. Usa los caminos que
+   acepta tu coche y su máximo de tierra, como «Puntos». */
+function parseDrive(buf) {
+  const h = new Int32Array(buf, 0, 6); if (h[0] !== 2) throw new Error("formato de red desconocido");
+  const N = h[1], E = h[2], lat0 = h[3], lon0 = h[4], K = h[5]; let o = 24;
+  const q = new Uint16Array(buf, o, 2 * N); o += 4 * N;
+  const U = new Uint32Array(buf, o, E); o += 4 * E; const Dv = new Int32Array(buf, o, E); o += 4 * E;
+  const len = new Uint16Array(buf, o, E); o += 2 * E; const spd = new Uint8Array(buf, o, E); o += E; const fl = new Uint8Array(buf, o, E);
+  const lat = new Float64Array(N), lon = new Float64Array(N);
+  for (let i = 0; i < N; i++) { lat[i] = (lat0 + q[2 * i] * K) / 1e5; lon[i] = (lon0 + q[2 * i + 1] * K) / 1e5; }
+  // adyacencia (CSR): para cada nodo, los tramos por los que se puede salir de él
+  const deg = new Uint32Array(N + 1);
+  for (let e = 0; e < E; e++) { const u = U[e], v = u + Dv[e]; if (fl[e] & 4) deg[u + 1]++; if (fl[e] & 8) deg[v + 1]++; }
+  for (let i = 0; i < N; i++) deg[i + 1] += deg[i];
+  const to = new Uint32Array(deg[N]), via = new Uint32Array(deg[N]), pos = deg.slice(0, N);
+  for (let e = 0; e < E; e++) { const u = U[e], v = u + Dv[e]; if (fl[e] & 4) { to[pos[u]] = v; via[pos[u]++] = e; } if (fl[e] & 8) { to[pos[v]] = u; via[pos[v]++] = e; } }
+  // donde se puede dejar el coche: nodos con algún tramo lento (en autovías y vías rápidas no se aparca)
+  const park = new Uint8Array(N); for (let e = 0; e < E; e++) if (spd[e] <= 75) { park[U[e]] = 1; park[U[e] + Dv[e]] = 1; }
+  // índice espacial: celdas de 0,005° (~500 m)
+  const C = .005, bi = (la, lo) => Math.floor((la - lat0 / 1e5) / C) * 4096 + Math.floor((lo - lon0 / 1e5) / C), cells = new Map();
+  for (let i = 0; i < N; i++) { const k = bi(lat[i], lon[i]); let a = cells.get(k); if (!a) cells.set(k, a = []); a.push(i); }
+  return { N, E, lat, lon, off: deg, to, via, len, spd, fl, park, cells, C, bi, lat0: lat0 / 1e5, lon0: lon0 / 1e5 };
+}
+// nodos a menos de r metros de un punto
+function driveNear(G, la, lo, r) {
+  const cx = 111320 * Math.cos(la * Math.PI / 180), cy = 110540, out = [], n = Math.ceil(r / (G.C * cx)) + 1, m = Math.ceil(r / (G.C * cy)) + 1;
+  const b0 = G.bi(la, lo);
+  for (let a = -m; a <= m; a++) for (let b = -n; b <= n; b++) {
+    const c = G.cells.get(b0 + a * 4096 + b); if (!c) continue;
+    for (const i of c) { const d = Math.hypot((G.lat[i] - la) * cy, (G.lon[i] - lo) * cx); if (d <= r) out.push([i, d]); }
+  }
+  return out;
+}
+/* Segundos desde casa a cada nodo con tu coche (Infinity = no llegas). El origen es el nodo de asfalto más cercano a casa. */
+const JUNCTION_S = 1; // segundos por cruce (frenar, ceder el paso, girar): ajustado con tiempos de Google Maps
+function driveFrom(G, la, lo, carLevel) {
+  const maxDirt = CAR_DIRT[carLevel] ?? 3000, N = G.N, t = new Float64Array(N).fill(Infinity), dirt = new Float32Array(N);
+  let s = -1, sd = Infinity;
+  for (const r of [300, 1500, 5000]) { for (const [i, d] of driveNear(G, la, lo, r)) { let paved = false; for (let p = G.off[i]; p < G.off[i + 1]; p++) if (!(G.fl[G.via[p]] & 3)) { paved = true; break; } if (paved && d < sd) { sd = d; s = i; } } if (s >= 0) break; }
+  if (s < 0) return null;
+  const heap = Heap(1 << 15); t[s] = 0; heap.push(0, s);
+  while (heap.size) {
+    const u = heap.pop(), d = heap.key; if (d > t[u]) continue;
+    for (let p = G.off[u]; p < G.off[u + 1]; p++) {
+      const e = G.via[p], c = G.fl[e] & 3; if (c > carLevel) continue;
+      const nd = d + G.len[e] * 3.6 / G.spd[e], dd = c ? dirt[u] + G.len[e] : 0; if (dd > maxDirt) continue;
+      const v = G.to[p], nv = nd + (G.off[v + 1] - G.off[v] >= 3 ? JUNCTION_S : 0); // cruces: frenar, ceder el paso, girar
+      if (nv < t[v]) { t[v] = nv; dirt[v] = dd; heap.push(nv, v); }
+    }
+  }
+  return { t, start: s, startDist: sd };
+}
+/* Distancia en línea recta (m) desde cada celda de una rejilla hasta el sitio más cercano donde puedes dejar el coche
+   (nodo alcanzable con tu coche). grid: { lat0, lon0, dlat, dlon, w, h } de la rejilla. */
+function reachRaster(G, D, gr) {
+  const m = new Uint8Array(gr.w * gr.h);
+  for (let i = 0; i < G.N; i++) if (D.t[i] < Infinity && G.park[i]) {
+    const a = Math.floor((G.lat[i] - gr.lat0) / gr.dlat), b = Math.floor((G.lon[i] - gr.lon0) / gr.dlon);
+    if (a >= 0 && b >= 0 && a < gr.h && b < gr.w) m[a * gr.w + b] = 1;
+  }
+  const dy = Math.abs(gr.dlat) * 111320, dx = Math.abs(gr.dlon) * 111320 * Math.cos(41.96 * Math.PI / 180);
+  return chamfer(m, gr.w, gr.h, dx, dy);
+}
+/* Dónde dejar el coche para ir a un sitio: el nodo alcanzable que suma menos coche + andar (andar ~4 km/h en línea recta
+   × 1,3), a menos de r metros. Devuelve minutos en coche, el punto y los metros en línea recta hasta el sitio. */
+function driveTo(G, D, la, lo, r) {
+  let best = null, bc = Infinity;
+  for (const [i, d] of driveNear(G, la, lo, r)) { const t = D.t[i]; if (t === Infinity || !G.park[i]) continue; const c = t + d * 1.3 / 1.1; if (c < bc) { bc = c; best = { min: Math.round(t / 60), lat: G.lat[i], lon: G.lon[i], walk: Math.round(d) }; } }
+  return best;
+}
+
 /* ---------- Caminos: estado del firme y red accesible en coche (OpenStreetMap vía Overpass) ---------- */
 const NO_CAR = /^(no|private|forestry|agricultural|delivery|customers|permit)$/;
 const PAVED = /^(asphalt|concrete|paved|concrete:plates|concrete:lanes|paving_stones|sett|chipseal)$/;
@@ -695,4 +769,4 @@ function analyzeWindow(grid, sc, th, bbox, ways, prefs, me, lc) {
   return out;
 }
 
-if (typeof module !== "undefined") module.exports = { PROFILES, profileOf, CAR_DIRT, CROWD_PATH, crowdMinWalk, MODEL, migratePrefs, PINE_NAMES, fieldPoints, buildModelField, soilF, walkWindow, WALK_COST, LC_CLASS_NAMES, barrierKind, walkableKind, simplify, climbProfile, roadClass, roadNetwork, nearestParking, effClass, ROAD_CLASS, CAR_LEVELS, STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };
+if (typeof module !== "undefined") module.exports = { parseDrive, driveNear, driveFrom, driveTo, reachRaster, Heap, PROFILES, profileOf, CAR_DIRT, CROWD_PATH, crowdMinWalk, MODEL, migratePrefs, PINE_NAMES, fieldPoints, buildModelField, soilF, walkWindow, WALK_COST, LC_CLASS_NAMES, barrierKind, walkableKind, simplify, climbProfile, roadClass, roadNetwork, nearestParking, effClass, ROAD_CLASS, CAR_LEVELS, STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };
