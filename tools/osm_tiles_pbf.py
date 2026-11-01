@@ -53,7 +53,14 @@ class H(osmium.SimpleHandler):
 t0 = time.time()
 src = os.path.join(HERE, 'cataluna.osm.pbf'); area = os.path.join(HERE, 'area.osm.pbf')
 if not os.path.exists(src):
-    print('descargando', PBF_URL, flush=True); urllib.request.urlretrieve(PBF_URL, src)
+    # con curl: si la descarga se queda casi parada (menos de 100 KB/s durante 90 s) se corta y se vuelve a intentar
+    print('descargando', PBF_URL, flush=True)
+    for intento in range(3):
+        r = subprocess.run(['curl', '-fsSL', '--retry', '3', '--retry-delay', '30', '--speed-limit', '100000', '--speed-time', '90',
+                            '--max-time', '1500', '-o', src + '.part', PBF_URL])
+        if r.returncode == 0: os.replace(src + '.part', src); break
+        print('descarga lenta o cortada, reintento', intento + 1, flush=True); time.sleep(60)
+    else: sys.exit('no he podido descargar el extracto de Geofabrik')
 print('extracto', os.path.getsize(src) // 1024 // 1024, 'MB', flush=True)
 subprocess.run(['osmium', 'extract', '--overwrite', '-b', f'{W0},{S0},{E0},{N0}', '--strategy', 'complete_ways', src, '-o', area], check=True)
 h = H(); h.apply_file(area, locations=True)
