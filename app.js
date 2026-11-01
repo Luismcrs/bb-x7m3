@@ -1,13 +1,13 @@
 /* Bolets Bages y Berguedà · app */
 "use strict";
-const VERSION = "1.15 · 1-11-2026";
+const VERSION = "1.16 · 1-11-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
 };
 const App = {
-  prefs: Object.assign({}, DEFAULT_PREFS, LS.get("bb.prefs", {})),
+  prefs: migratePrefs(LS.get("bb.prefs", null)),
   grid: null, raw: null, summ: null, scores: null, th: null, me: null, heading: null, follow: false,
   ways: null, analysis: LS.get("bb.lastAnalysis", null), diary: LS.get("bb.diary", []), guide: null, fc: null, meteoInfo: null,
   date: null, plan: null, ratings: LS.get("bb.ratings", {}), home: LS.get("bb.home", { lat: 41.7245, lon: 1.8265, n: "Manresa" }), munis: null, muniArr: null
@@ -82,6 +82,28 @@ async function loadGrid() {
   App.munis = await fetchJSON("data/munis.json");
   App.grid = g;
 }
+/* Distancia en línea recta a donde se puede dejar el coche (asfalto · pista buena · pista normal), una celda de cada
+   3 × 3 (las que usa «Planear»). Sale de los caminos de OpenStreetMap y se renueva cada mes. */
+async function loadRoad() {
+  if (App.road) return App.road;
+  try {
+    const px = await loadPixels("data/road.png"), n = px.length / 4, a = [new Uint8Array(n), new Uint8Array(n), new Uint8Array(n)];
+    for (let i = 0, q = 0; i < n; i++, q += 4) { a[0][i] = px[q]; a[1][i] = px[q + 1]; a[2][i] = px[q + 2]; }
+    App.road = { w: Math.floor(App.grid.W / 3), a }; return App.road;
+  } catch (e) { console.warn("road", e); return null; }
+}
+// metros en línea recta desde la celda (i, j) de 30 m hasta donde llega tu coche (null si no se sabe)
+function carDist(i, j) {
+  const R = App.road; if (!R) return null;
+  return R.a[Math.min(2, App.prefs.carLevel)][Math.floor(i / 3) * R.w + Math.floor(j / 3)] * 10;
+}
+/* «Planear» solo cuenta los sitios a los que llegas: a menos del 80 % de tu máximo andando (en línea recta) de donde
+   deja el coche tu coche y, con niños, en terreno suave. El índice de cada sitio no cambia. */
+function planReach() {
+  const p = App.prefs, pr = profileOf(p), g = App.grid, lim = p.walkMax * .8, sl = pr.spotSlope * 4;
+  return (i, j, k) => { if (g.sl4[k] > sl) return false; const d = carDist(i, j); return d == null || d <= lim; };
+}
+const planSig = () => [App.prefs.sp, App.prefs.profile, App.prefs.walkMax, App.prefs.carLevel, App.road ? 1 : 0].join();
 // El relieve calculado se guarda en el móvil (unos 16 MB) para no recalcularlo cada vez que abres la app
 const terrKey = g => "derived/terrain-" + g.W + "x" + g.H + "-" + g.lat0 + "-" + g.lon0;
 async function loadTerrainCache(g) {
@@ -400,7 +422,7 @@ async function runAnalysisAsync(fit, fitMap) {
   LS.set("bb.lastAnalysis", App.analysis);
   drawSpots(); renderSpotList(); updateSaveBtn();
   if (fit) {
-    if (!res.spots.length) toast("No hay zonas buenas que cumplan tus ajustes aquí. Prueba a subir la distancia andando o a mover el mapa.");
+    if (!res.spots.length) toast("No hay zonas buenas que cumplan tus ajustes aquí. Prueba a andar más (Ajustes) o a mover el mapa.");
     openSheet("puntos");
     if (fitMap && res.spots.length) fitSpots();
   }
@@ -490,7 +512,7 @@ function renderSpotList() {
     li.append(mkBtn("Reintentar", analyze, "small")); ol.append(li);
   }
   if (!A) { ol.innerHTML = '<li class="hint">Todavía no hay puntos. Acerca el mapa a una zona y pulsa el botón.</li>'; return; }
-  if (!A.spots.length) { ol.innerHTML = '<li class="hint">Con tus ajustes de coche y de distancia andando no llegas a ninguna zona buena aquí. Prueba a aceptar más camino de tierra, a andar más o a mover el mapa.</li>'; return; }
+  if (!A.spots.length) { ol.innerHTML = '<li class="hint">Con tus ajustes («Cómo vas» y «Tu coche») no llegas a ninguna zona buena aquí. Prueba a andar más, a aceptar más pistas o a mover el mapa.</li>'; return; }
   if (A.sp !== App.prefs.sp) ol.insertAdjacentHTML("beforeend", '<li class="hint">Estos puntos son de otra especie. Vuelve a buscar.</li>');
   A.spots.forEach((s, i) => {
     const li = document.createElement("li"); li.className = "spot";
@@ -863,19 +885,22 @@ map.on("dragstart zoomstart", e => { if (e.originalEvent || e.type === "dragstar
 async function planInit(force) {
   if (!App.grid || !App.raw || !App.munis) return;
   planMark = Date.now();
-  if (App.plan && !force && App.plan.sp === App.prefs.sp && App.plan.kids === App.prefs.kids && App.plan.day === dayKey(new Date())) { renderPlan(); return; }
+  if (App.plan && !force && App.plan.sig === planSig() && App.plan.day === dayKey(new Date())) { renderPlan(); return; }
   if (planBusy) return; planBusy = true;
   $("#planMsg").textContent = "Calculando las mejores zonas para los próximos días…"; $("#zones").innerHTML = ""; $("#planDays").innerHTML = "";
   try {
-    const fc = await fetchStationsForecast();
-    const today = new Date(), ext = fc ? extendStations(App.raw, fc, dayKey(today)) : App.raw, N = fc ? 7 : 1, days = [];
+    await loadRoad();
+    // si solo han cambiado tus ajustes (no el día), se aprovecha la previsión ya descargada
+    const old = App.plan && !force && App.plan.day === dayKey(new Date()) ? App.plan : null;
+    const fc = old ? old.fc : await fetchStationsForecast();
+    const today = new Date(), ext = fc ? extendStations(App.raw, fc, dayKey(today)) : App.raw, N = fc ? 7 : 1, days = [], ok = planReach();
     for (let k = 0; k < N; k++) {
       const date = addDays(today, k), sc = computeScores(App.grid, summaryAt(ext, date), App.prefs, date, 3);
-      const zones = zoneRanking(App.grid, sc, App.muniArr, App.munis, 3);
+      const zones = zoneRanking(App.grid, sc, App.muniArr, App.munis, 3, ok);
       days.push({ date, zones, best: zones.length ? zones[0].q : 0, rain: fc ? avgRain(fc, k) : 0 });
       await new Promise(r => setTimeout(r, 0));
     }
-    App.plan = { days, ext, sel: App.plan ? Math.min(App.plan.sel, N - 1) : 0, sp: App.prefs.sp, kids: App.prefs.kids, day: dayKey(today), noFc: !fc, drive: {} };
+    App.plan = { days, ext, fc, sel: App.plan ? Math.min(App.plan.sel, N - 1) : 0, sig: planSig(), day: dayKey(today), noFc: !fc, drive: {} };
     renderPlan();
   } catch (e) { console.error(e); $("#planMsg").textContent = "No he podido calcular el plan. Prueba otra vez en un momento."; }
   finally { planBusy = false; }
@@ -906,7 +931,8 @@ function renderPlan() {
     const tops = P.days.map(x => x.zones.filter(z => estDrive(z) <= maxD).slice(0, 3).map(z => z.id).join());
     if (tops.every(t => t === tops[0])) msg += " Esta semana las mejores zonas son las mismas todos los días: la última lluvia fue parecida en todas partes y no se esperan cambios grandes; lo que cambia es el nivel de cada día.";
   }
-  msg += show.length ? " Estas son las mejores zonas a menos de " + maxD + " min:" : " No hay zonas a menos de " + maxD + " min: sube el máximo en coche.";
+  const reachTxt = " (cuentan los sitios a los que llegas: " + ["coche solo por asfalto", "coche por pistas buenas", "coche por pistas normales", "todoterreno"][App.prefs.carLevel] + " y hasta " + fmtDist(App.prefs.walkMax) + " andando" + (profileOf(App.prefs) === PROFILES.ninos ? ", en terreno suave" : "") + ")";
+  msg += show.length ? " Estas son las mejores zonas a menos de " + maxD + " min" + reachTxt + ":" : " No hay zonas a menos de " + maxD + " min" + reachTxt + ": sube el máximo en coche o cambia tus ajustes.";
   $("#planMsg").textContent = msg;
   const ol = $("#zones"); ol.innerHTML = ""; layerPlan.clearLayers();
   show.forEach((z, i) => {
@@ -919,7 +945,8 @@ function renderPlan() {
     const qs = qBy[z.id] || [], qmax = Math.max(...qs.map(v => v || 0)), kbest = qs.indexOf(qmax), flat = qmax - Math.min(...qs.map(v => v || 0)) < 3;
     const spark = '<span class="spark" aria-hidden="true">' + qs.map((v, k) => '<i class="' + (k === P.sel ? "sel" : "") + '" style="height:' + Math.max(3, Math.round((v || 0) / 80 * 18)) + "px;background:" + LV_COL[absLevel(v || 0)] + '"></i>').join("") + "</span>";
     const week = P.days.length < 2 ? "" : flat ? "igual toda la semana" : kbest === P.sel ? "★ su mejor día de la semana" : "su mejor día: " + (kbest === 0 ? "hoy" : kbest === 1 ? "mañana" : wd(P.days[kbest].date)) + " (" + fmt(qmax) + ")";
-    li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[lv] + '">' + (i + 1) + '</span><span class="tt"><b>' + esc(z.n) + " · " + ABS_NAMES[lv] + '</b><small class="wk">' + spark + esc(week) + '</small><small><span data-zone="' + z.id + '"></span>' + esc(drive + " · mejor sitio: " + (z.slope < 6 ? "llano" : z.slope < 12 ? "suave" : "inclinado") + (z.slope >= 4 ? ", mira al " + DIRL[dI] : "") + ", " + fmtDist(z.edge) + " dentro del bosque" + (ha > 0 ? " · " + fmt(ha) + " ha de zona media o mejor" : "")) + '</small></span><span class="sc">' + fmt(z.q) + '</span></div><div class="acts"></div>';
+    const cd = carDist(z.i, z.j), near = cd == null ? "" : cd < 60 ? ", junto a donde dejar el coche" : ", a ~" + fmtDist(cd) + " en línea recta del coche";
+    li.innerHTML = '<div class="hd"><span class="n" style="background:' + LV_COL[lv] + '">' + (i + 1) + '</span><span class="tt"><b>' + esc(z.n) + " · " + ABS_NAMES[lv] + '</b><small class="wk">' + spark + esc(week) + '</small><small><span data-zone="' + z.id + '"></span>' + esc(drive + " · mejor sitio: " + (z.slope < 6 ? "llano" : z.slope < 12 ? "suave" : "inclinado") + (z.slope >= 4 ? ", mira al " + DIRL[dI] : "") + ", " + fmtDist(z.edge) + " dentro del bosque" + near + (ha > 0 ? " · " + fmt(ha) + " ha de zona media o mejor a tu alcance" : "")) + '</small></span><span class="sc">' + fmt(z.q) + '</span></div><div class="acts"></div>';
     const acts = li.querySelector(".acts");
     acts.append(mkBtn("Ver zona", () => openPlanZone(z, d.date), "primary small"));
     acts.append(mkBtn("Ir en coche", () => goByCar(z.lat, z.lon), "small"));
@@ -986,41 +1013,63 @@ $("#homeHere").onclick = () => {
   if (App.plan) App.plan.drive = {}; renderPlan(); toast("Casa guardada");
 };
 
-/* ---------- Ajustes ---------- */
+/* ---------- Ajustes ----------
+   Cuatro bloques sin dependencias escondidas: cómo vas (perfil + dos barras para afinarlo), tu coche, evitar lo
+   concurrido y el mapa. Ningún ajuste cambia el índice: solo qué puntos y zonas se enseñan y en qué orden. */
 const SL = {
-  flat: v => v < .15 ? "da igual" : v < .5 ? "algo" : v < .85 ? "bastante" : "mucho",
-  interior: v => v == 0 ? "da igual" : "pleno a " + v + " m del borde",
-  pathMin: v => v == 0 ? "da igual" : "mejor a más de " + v + " m",
-  walkMax: v => fmtDist(v), shade: v => fmt(v * 100) + " %", hollow: v => fmt(v * 100) + " %",
+  walkMax: v => fmtDist(v), climbMax: v => v + " m",
   minLevel: v => ["", "25 % mejor", "10 % mejor", "3 % mejor"][v], opacity: v => fmt(v * 100) + " %",
-  maxDrive: v => v + " min",
-  carLevel: v => CAR_LEVELS[v], dirtMax: v => v == 0 ? "nada de tierra" : fmtDist(v),
-  climbMax: v => (App.prefs.kids && v > 40 ? "40 m (modo niños)" : v + " m"), minWalk: v => v == 0 ? "da igual" : "al menos " + fmtDist(v)
+  maxDrive: v => v + " min"
 };
-const HEAVY = new Set(["flat", "interior", "shade", "hollow"]);
+const CAR_HINT = ["Nada de tierra: aparcas en carretera o calle asfaltada.", "Pistas buenas (compactadas o de grava fina), hasta 1 km de tierra desde el asfalto.", "Pistas buenas y normales, hasta 3 km de tierra desde el asfalto.", "Cualquier pista, también las malas, hasta 6 km de tierra."];
+function profileHint() {
+  const p = App.prefs, pr = profileOf(p), custom = p.walkMax !== pr.walkMax || p.climbMax !== pr.climbMax;
+  let t = "Hasta " + fmtDist(p.walkMax) + " andando desde el coche y " + p.climbMax + " m de desnivel.";
+  if (pr === PROFILES.ninos) t += " Solo terreno suave: el camino no pasa por pendientes de más de " + pr.pathSlope + "° y el punto no está en una ladera de más de " + pr.spotSlope + "°. Mejor cuanto más llano y más cerca.";
+  if (custom) t += " Afinado a tu gusto (el perfil " + pr.n.toLowerCase() + " trae " + fmtDist(pr.walkMax) + " y " + pr.climbMax + " m).";
+  return t;
+}
+function crowdHint() {
+  return "Puntos a más de " + CROWD_PATH + " m de caminos y senderos, lejos del asfalto y de los pueblos, y con al menos " + fmtDist(crowdMinWalk(App.prefs.walkMax)) + " de paseo (nunca más que tu máximo).";
+}
+function seg(id, items, cur, onPick) {
+  const box = $("#" + id); box.innerHTML = "";
+  items.forEach(([v, label]) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "segb"; b.textContent = label; b.setAttribute("aria-pressed", v === cur);
+    b.onclick = () => onPick(v); box.append(b);
+  });
+}
 let rcT = null;
+// tras cambiar algo: rehace los puntos si hay una búsqueda y, la próxima vez que abras «Planear», las zonas
+function prefsChanged(points = true) {
+  LS.set("bb.prefs", App.prefs); renderPrefs();
+  clearTimeout(rcT); if (points) rcT = setTimeout(() => { if (App.ways) runAnalysis(false); }, 300);
+}
+function renderPrefs() {
+  const p = App.prefs;
+  seg("profile", Object.entries(PROFILES).map(([k, v]) => [k, v.n]), p.profile, v => { const pr = PROFILES[v]; p.profile = v; p.walkMax = pr.walkMax; p.climbMax = pr.climbMax; prefsChanged(); toast("Perfil: " + pr.n.toLowerCase()); });
+  $("#profileHint").textContent = profileHint();
+  seg("carLevel", [[0, "Solo asfalto"], [1, "Pistas buenas"], [2, "Pistas normales"], [3, "Todo\u00ADterreno"]], p.carLevel, v => { p.carLevel = v; prefsChanged(); });
+  $("#carHint").textContent = CAR_HINT[p.carLevel];
+  $("#avoidCrowd").checked = !!p.avoidCrowd; $("#crowdHint").textContent = crowdHint();
+  for (const k of Object.keys(SL)) { const el = $("#" + k); el.value = p[k]; $("#" + k + "V").textContent = SL[k](+el.value); }
+}
 function bindPrefs() {
+  renderPrefs();
   for (const k of Object.keys(SL)) {
-    const el = $("#" + k); el.value = App.prefs[k]; $("#" + k + "V").textContent = SL[k](+el.value);
+    const el = $("#" + k);
     el.oninput = () => {
       App.prefs[k] = +el.value; $("#" + k + "V").textContent = SL[k](+el.value); LS.set("bb.prefs", App.prefs);
       if (k === "opacity") { if (overlay) overlay.setOpacity(App.prefs.opacity); return; }
       if (k === "maxDrive") { planMark = Date.now(); renderPlan(); return; }
-      if (k === "carLevel" || k === "dirtMax" || k === "climbMax" || k === "minWalk") { clearTimeout(rcT); rcT = setTimeout(() => { if (App.ways) runAnalysis(false); }, 300); return; }
-      clearTimeout(rcT);
-      rcT = setTimeout(() => { if (HEAVY.has(k)) recompute(); else if (k === "minLevel") renderOverlay(); else if (App.ways) runAnalysis(false); }, 300);
+      if (k === "minLevel") { clearTimeout(rcT); rcT = setTimeout(renderOverlay, 200); return; }
+      $("#profileHint").textContent = profileHint(); $("#crowdHint").textContent = crowdHint();
+      clearTimeout(rcT); rcT = setTimeout(() => { if (App.ways) runAnalysis(false); }, 400);
     };
   }
-  const kd = $("#kids"); kd.checked = !!App.prefs.kids;
-  kd.onchange = () => {
-    App.prefs.kids = kd.checked;
-    if (kd.checked) { App.prefs.walkMax = Math.min(App.prefs.walkMax, 300); App.prefs.pathMin = Math.min(App.prefs.pathMin, 30); }
-    LS.set("bb.prefs", App.prefs); bindPrefs(); recompute(); App.plan = null;
-  };
-  const ac = $("#avoidCrowd"); ac.checked = !!App.prefs.avoidCrowd;
-  ac.onchange = () => { App.prefs.avoidCrowd = ac.checked; LS.set("bb.prefs", App.prefs); if (App.ways) runAnalysis(false); toast(ac.checked ? "Evito las zonas más concurridas" : "Ya no evito las zonas concurridas"); };
+  $("#avoidCrowd").onchange = e => { App.prefs.avoidCrowd = e.target.checked; prefsChanged(); toast(e.target.checked ? "Evito lo concurrido" : "Ya no evito lo concurrido"); };
 }
-$("#resetPrefs").onclick = () => { const sp = App.prefs.sp; App.prefs = Object.assign({}, DEFAULT_PREFS, { sp }); LS.set("bb.prefs", App.prefs); bindPrefs(); if (overlay) overlay.setOpacity(App.prefs.opacity); recompute(); toast("Ajustes por defecto"); };
+$("#resetPrefs").onclick = () => { const sp = App.prefs.sp; App.prefs = Object.assign({}, DEFAULT_PREFS, { sp }); LS.set("bb.prefs", App.prefs); bindPrefs(); if (overlay) overlay.setOpacity(App.prefs.opacity); renderOverlay(); if (App.ways) runAnalysis(false); toast("Ajustes por defecto"); };
 $("#refreshMeteo").onclick = async () => { await loadMeteo(true); summarize(); recompute(); meteoStatus(); renderMeteoTable(); toast("Meteo actualizada"); };
 
 /* ---------- Especie ---------- */
@@ -1063,6 +1112,7 @@ window.addEventListener("error", e => console.warn(e.message));
 (async function init() {
   $("#version").textContent = "Versión " + VERSION; $("#appVersion").textContent = "Versión " + VERSION;
   $("#spName").textContent = SPECIES[App.prefs.sp].n;
+  LS.set("bb.prefs", App.prefs); // guarda los ajustes ya pasados al formato nuevo
   bindPrefs(); renderDiary(); renderSpotList(); renderOffZones();
   if (LS.get("bb.gpsOk", false)) startGPS(false);
   try {

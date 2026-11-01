@@ -31,7 +31,36 @@ const SPECIES = {
   camagroc: { n: "Camagroc",      lat: "Craterellus lutescens", aff: { pb: .5, pn: .8, ps: 1, al: .65, ro: .6 }, cov: { dp: .85, sp: .4, db: .85, sb: .45, sc: .15 }, lc: [0, 1, .5, 1, .5], tmin: [3, 12], tmax: [9, 20],  season: ["10-05", "10-30", "01-10", "02-15"], rainMin: 25, rainFull: 90, asp: .15, hollow: 1, win: [0, 8, 12, 22, 30] }
 };
 
-const DEFAULT_PREFS = { sp: "rovello", flat: 0.7, interior: 90, shade: 1, hollow: 1, pathMin: 60, walkMax: 600, minLevel: 1, opacity: 0.7, kids: false, maxDrive: 45, carLevel: 2, dirtMax: 2000, climbMax: 100, avoidCrowd: false, minWalk: 300 };
+/* Cómo vas: cada perfil fija hasta dónde andas y cuánto subes (se puede afinar con las barras).
+   «Con niños» además solo usa terreno suave: el camino no pasa por pendientes de más de 28° y el punto no está en una
+   ladera de más de 20°. Los perfiles no cambian el índice: solo qué puntos y zonas se enseñan y en qué orden. */
+const PROFILES = {
+  ninos:   { n: "Con niños", walkMax: 300,  climbMax: 40,  pathSlope: 28, spotSlope: 20, upW: 10, pathMin: 30 },
+  normal:  { n: "Normal",    walkMax: 700,  climbMax: 120, pathSlope: 38, spotSlope: 90, upW: 7,  pathMin: 60 },
+  andarin: { n: "Andarín",   walkMax: 1500, climbMax: 250, pathSlope: 38, spotSlope: 90, upW: 7,  pathMin: 60 }
+};
+const profileOf = prefs => PROFILES[prefs.profile] || PROFILES.normal;
+// Tu coche: caminos que acepta y metros de tierra como máximo desde el asfalto
+const CAR_DIRT = [0, 1000, 3000, 6000];
+// Evitar lo concurrido: lejos de caminos y senderos y algo de paseo, sin pasar nunca del máximo andando
+const CROWD_PATH = 150, crowdMinWalk = walkMax => Math.round(Math.min(300, walkMax * .4) / 10) * 10;
+// Factores fijos del modelo (antes eran ajustes): pendiente, distancia al borde del bosque, umbrías y vaguadas
+const MODEL = { flat: .7, interior: 90, shade: 1, hollow: 1 };
+const DEFAULT_PREFS = { sp: "rovello", profile: "normal", walkMax: 700, climbMax: 120, carLevel: 2, avoidCrowd: false, minLevel: 1, opacity: 0.7, maxDrive: 45 };
+/* Ajustes guardados por versiones anteriores (1.15 o antes) → perfil más parecido. Si habías cambiado la distancia
+   andando o el desnivel, se conservan tus valores; si estaban por defecto, se usan los del perfil. */
+function migratePrefs(p) {
+  p = p || {}; if (p.profile && PROFILES[p.profile]) return Object.assign({}, DEFAULT_PREFS, p);
+  const out = Object.assign({}, DEFAULT_PREFS);
+  for (const k of ["sp", "carLevel", "minLevel", "opacity", "maxDrive"]) if (p[k] != null) out[k] = p[k];
+  out.avoidCrowd = !!p.avoidCrowd;
+  const wm = p.walkMax ?? 600, cm = p.climbMax ?? 100;
+  out.profile = p.kids ? "ninos" : wm >= 1100 ? "andarin" : "normal";
+  const pr = PROFILES[out.profile];
+  out.walkMax = p.kids ? Math.min(wm, pr.walkMax) : wm === 600 ? pr.walkMax : wm;
+  out.climbMax = p.kids ? Math.min(cm, pr.climbMax) : cm === 100 ? pr.climbMax : cm;
+  return out;
+}
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function interp(x, xs, ys) {
@@ -272,12 +301,12 @@ class Grid {
   idx(lat, lon) { const i = this.rowOf(lat), j = this.colOf(lon); return (i < 0 || j < 0 || i >= this.H || j >= this.W) ? -1 : i * this.W + j; }
 }
 
-/* Índice 0–100 de toda la rejilla para una especie, fecha y preferencias. */
+/* Índice 0–100 de toda la rejilla para una especie y una fecha. De tus ajustes solo usa la especie. */
 function computeScores(grid, summ, prefs, date, step = 1) {
   const s = SPECIES[prefs.sp], W = grid.W, H = grid.H, BS = 16;
   const out = new Float32Array(grid.n).fill(NaN);
   const Rst = {}; for (const k in summ) Rst[k] = rainScore(summ[k].rain, summ[k].tmax, date, s).R;
-  const flat = prefs.kids ? 1 : prefs.flat, inter = prefs.interior, shade = prefs.shade, hol = prefs.hollow * s.hollow;
+  const flat = MODEL.flat, inter = MODEL.interior, shade = MODEL.shade, hol = MODEL.hollow * s.hollow; // no dependen de tus ajustes
   const SLX = [0, 6, 12, 18, 25, 35, 90], SLY = [1, 1, .9, .72, .5, .3, .2];
   for (let bi = 0; bi < H; bi += BS) for (let bj = 0; bj < W; bj += BS) {
     const la = grid.latOf(Math.min(H - 1, bi + BS / 2)), lo = grid.lonOf(Math.min(W - 1, bj + BS / 2));
@@ -309,7 +338,7 @@ function computeScores(grid, summ, prefs, date, step = 1) {
       a += s.asp; D = Math.min(D, sF);
       let T = (band(tmin, s.tmin[0], s.tmin[1]) + band(tmax, s.tmax[0], s.tmax[1])) / 2; if (tmin < 0) T *= .4;
       const sl = grid.sl4[k] / 4;
-      let Sl = 1 - flat * (1 - interp(sl, SLX, SLY)); if (prefs.kids && sl > 20) Sl *= .5;
+      const Sl = 1 - flat * (1 - interp(sl, SLX, SLY));
       const I = inter > 0 ? .5 + .5 * clamp(grid.ed4[k] * 4 / inter, 0, 1) : 1;
       const A = 1 + a * shade * grid.cosAsp[grid.asp[k]] * Math.min(1, sl / 10);
       const Wh = 1 + clamp(-grid.tpi8[k] / 20, -.3, .3) * hol;
@@ -331,10 +360,11 @@ const LEVEL_NAMES = ["Baja", "Media", "Alta", "Muy alta"];
 /* ---------- Planificar la salida: ranking de municipios ----------
    muniArr: id de municipio por celda (0 = fuera). Devuelve, por municipio, el percentil 99 del índice
    (lo que vale lo mejor de la zona) y el mejor punto (máximo de la media 3×3 de la rejilla muestreada). */
-function zoneRanking(grid, sc, muniArr, munis, step) {
+function zoneRanking(grid, sc, muniArr, munis, step, ok) {
   const W = grid.W, H = grid.H, vals = {}, best = {};
   for (let i = step; i < H - step; i += step) for (let j = step; j < W - step; j += step) {
     const k = i * W + j, v = sc[k], m = muniArr[k]; if (!m || !(v > 0)) continue;
+    if (ok && !ok(i, j, k)) continue; // solo los sitios a los que llegas (tu coche y cómo vas)
     (vals[m] || (vals[m] = [])).push(v);
     let sum = 0, c = 0; for (let a = -step; a <= step; a += step) for (let b = -step; b <= step; b += step) { const u = sc[k + a * W + b]; if (u > 0) { sum += u; c++; } }
     const mv = c >= 6 ? sum / 9 : 0;
@@ -345,7 +375,7 @@ function zoneRanking(grid, sc, muniArr, munis, step) {
     const v = vals[mu.id]; if (!v || v.length < 20 || !best[mu.id]) continue;
     v.sort((a, b) => a - b); const q = v[Math.min(v.length - 1, Math.floor(v.length * .99))]; // lo mejor de la zona
     const b = best[mu.id], k = b.k;
-    out.push({ id: mu.id, n: mu.n, q, lat: grid.latOf(b.i), lon: grid.lonOf(b.j), slope: grid.slope(k), aspect: grid.aspect(k), edge: grid.edge(k), tree: grid.tree(k), z: grid.z(k), good: v.filter(x => x >= 30).length * step * step });
+    out.push({ id: mu.id, n: mu.n, q, i: b.i, j: b.j, lat: grid.latOf(b.i), lon: grid.lonOf(b.j), slope: grid.slope(k), aspect: grid.aspect(k), edge: grid.edge(k), tree: grid.tree(k), z: grid.z(k), good: v.filter(x => x >= 30).length * step * step });
   }
   return out.sort((a, b) => b.q - a.q);
 }
@@ -390,7 +420,7 @@ function effClass(w, ratings) {
 }
 /* Red de caminos que acepta tu coche y metros de tierra necesarios desde el asfalto más cercano (Dijkstra). */
 function roadNetwork(ways, prefs) {
-  const lvl = prefs.carLevel ?? 2, maxDirt = lvl === 0 ? 0 : (prefs.dirtMax ?? 2000), nodes = new Map(), segs = [];
+  const lvl = prefs.carLevel ?? 2, maxDirt = CAR_DIRT[lvl] ?? 3000, nodes = new Map(), segs = [];
   for (const w of ways) {
     const c = effClass(w, prefs.ratings); w._cls = c;
     if (c < 0 || c > lvl || !w.nodes || !w.geometry || w.nodes.length !== w.geometry.length) continue;
@@ -582,7 +612,7 @@ function analyzeWindow(grid, sc, th, bbox, ways, prefs, me, lc) {
     });
   }
   // Coste de cada celda
-  const kids = !!prefs.kids, maxSl = kids ? 28 : 38, cost = new Float32Array(N), z = new Float32Array(N);
+  const pr = profileOf(prefs), kids = pr === PROFILES.ninos, maxSl = pr.pathSlope, cost = new Float32Array(N), z = new Float32Array(N);
   for (let q = 0; q < N; q++) {
     const k = k30(q), sl = grid.sl4[k] / 4; let c;
     if (bridgeM[q]) c = bridgeM[q] === 2 ? 2.5 : .8;
@@ -601,7 +631,7 @@ function analyzeWindow(grid, sc, th, bbox, ways, prefs, me, lc) {
     }
   }
   // 3) Ruta a pie de mínimo esfuerzo desde cualquier sitio donde aparcar
-  const walkMax = prefs.walkMax ?? 600, upW = kids ? 10 : 7, capCost = walkMax * 3 + 600;
+  const walkMax = prefs.walkMax ?? pr.walkMax, upW = pr.upW, capCost = walkMax * 3 + 600;
   const dist = new Float64Array(N).fill(Infinity), real = new Float32Array(N), up = new Float32Array(N), down = new Float32Array(N), par = new Int32Array(N).fill(-1);
   const heap = Heap(1 << 16);
   for (let q = 0; q < N; q++) if (carSeg[q] >= 0 && cost[q] < Infinity) { dist[q] = 0; heap.push(0, q); }
@@ -624,8 +654,9 @@ function analyzeWindow(grid, sc, th, bbox, ways, prefs, me, lc) {
   const S10 = boxMean(wsrc, W, H, 3), dPath = chamfer(wayM, W, H, dx, dy), dPav = chamfer(pavM, W, H, dx, dy);
   const builtNear = boxMean(bm, W, H, 75), pathDens = boxMean(wayM, W, H, 24);
   const crowdAt = q => clamp(.45 * clamp(1 - dPav[q] / 600, 0, 1) + .35 * clamp(pathDens[q] / .04, 0, 1) + .2 * clamp(builtNear[q] / .05, 0, 1) + .25 * clamp(1 - real[q] / 250, 0, 1), 0, 1);
-  const climbMax = kids ? Math.min(prefs.climbMax ?? 100, 40) : (prefs.climbMax ?? 100);
-  const minWalk = prefs.avoidCrowd ? (prefs.minWalk ?? 300) : 0, pathMin = prefs.avoidCrowd ? Math.max(prefs.pathMin, 120) : prefs.pathMin;
+  // lo que ves en Ajustes es lo que se usa: sin límites escondidos
+  const climbMax = prefs.climbMax ?? pr.climbMax, spotSl = pr.spotSlope;
+  const minWalk = prefs.avoidCrowd ? crowdMinWalk(walkMax) : 0, pathMin = prefs.avoidCrowd ? CROWD_PATH : pr.pathMin;
   const bi0 = Math.max(1, Math.ceil(rowF(bbox.n))), bi1 = Math.min(H - 2, Math.floor(rowF(bbox.s))), bj0 = Math.max(1, Math.ceil(colF(bbox.w))), bj1 = Math.min(W - 2, Math.floor(colF(bbox.e)));
   const sc3 = k => { let sum = 0, c = 0; for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const u = sc[k + a * grid.W + b]; if (u > 0) { sum += u; c++; } } return c >= 6 ? sum / 9 : 0; };
   const cand = [];
@@ -634,8 +665,11 @@ function analyzeWindow(grid, sc, th, bbox, ways, prefs, me, lc) {
     if (Math.max(up[q], down[q]) > climbMax) continue;
     if ((s.lc[cls[q]] || 0) < .5 || S10[q] < .6) continue; // en bosque adecuado de verdad, no en un matorral ni en una franja
     const k = k30(q); if (!(sc[k] > 0)) continue; const v = sc3(k); if (!(v > 0)) continue;
+    const sl = grid.sl4[k] / 4; if (sl > spotSl) continue; // con niños, el punto en terreno suave
     const pf = pathMin > 0 ? .6 + .4 * clamp(dPath[q] / pathMin, 0, 1) : 1;
-    cand.push({ q, v: v * pf * (.6 + .4 * S10[q]) * (prefs.avoidCrowd ? 1 - .5 * crowdAt(q) : 1) });
+    const gentle = kids ? interp(sl, [0, 10, 20], [1, 1, .8]) : 1; // con niños, mejor cuanto más llano y más cerca
+    const near = kids ? interp(real[q], [0, 150, walkMax], [1, 1, .85]) : 1;
+    cand.push({ q, v: v * pf * gentle * near * (.6 + .4 * S10[q]) * (prefs.avoidCrowd ? 1 - .5 * crowdAt(q) : 1) });
   }
   cand.sort((a, b) => b.v - a.v);
   const picks = [], sep = 300;
@@ -661,4 +695,4 @@ function analyzeWindow(grid, sc, th, bbox, ways, prefs, me, lc) {
   return out;
 }
 
-if (typeof module !== "undefined") module.exports = { PINE_NAMES, fieldPoints, buildModelField, soilF, walkWindow, WALK_COST, LC_CLASS_NAMES, barrierKind, walkableKind, simplify, climbProfile, roadClass, roadNetwork, nearestParking, effClass, ROAD_CLASS, CAR_LEVELS, STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };
+if (typeof module !== "undefined") module.exports = { PROFILES, profileOf, CAR_DIRT, CROWD_PATH, crowdMinWalk, MODEL, migratePrefs, PINE_NAMES, fieldPoints, buildModelField, soilF, walkWindow, WALK_COST, LC_CLASS_NAMES, barrierKind, walkableKind, simplify, climbProfile, roadClass, roadNetwork, nearestParking, effClass, ROAD_CLASS, CAR_LEVELS, STATIONS, SPECIES, DEFAULT_PREFS, zoneRanking, extendStations, rainScore, absLevel, ABS_NAMES, seasonF, stationSummary, meteoAt, meteoFactors, forestMix, Grid, computeScores, thresholds, levelOf, LEVEL_NAMES, analyzeWindow, isDrivable, dayKey, parseDay, daysBetween, kmDist };

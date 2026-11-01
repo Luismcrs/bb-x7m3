@@ -88,27 +88,24 @@
   </div>
 
   <div class="panel" id="p-ajustes" role="tabpanel" hidden>
-    <label class="toggle"><input type="checkbox" id="kids"><span>Con niños</span><small>Laderas suaves y cerca del coche</small></label>
-    <div class="slider"><label for="flat">Preferir terreno llano</label><input type="range" id="flat" min="0" max="1" step="0.05"><output id="flatV"></output></div>
-    <div class="slider"><label for="interior">Adentrarse en el bosque</label><input type="range" id="interior" min="0" max="250" step="10"><output id="interiorV"></output></div>
-    <div class="slider"><label for="pathMin">Lejos de caminos y senderos</label><input type="range" id="pathMin" min="0" max="250" step="10"><output id="pathMinV"></output></div>
-    <h3>Tu coche</h3>
-    <div class="slider"><label for="carLevel">Caminos que acepta</label><input type="range" id="carLevel" min="0" max="3" step="1"><output id="carLevelV"></output></div>
-    <div class="slider"><label for="dirtMax">Máximo por camino de tierra</label><input type="range" id="dirtMax" min="0" max="6000" step="250"><output id="dirtMaxV"></output></div>
-    <p class="hint">El estado sale de OpenStreetMap (tipo de pista, firme y estado). Cuando falta, la pista cuenta como «normal». En el mapa, toca un camino de color para valorarlo («bien», «al límite» o «no pasa»): tu valoración manda.<br>Azul: asfalto · verde: pista buena · naranja: normal · rojo: mala. Discontinuo: no llegas con tus ajustes.</p>
-    <h3>Andando</h3>
+    <p class="hint">Tus ajustes no cambian el índice ni el nivel (alta, media…): eso depende solo de la meteo, el bosque y el terreno. Deciden qué puntos y zonas te enseño y en qué orden.</p>
+    <h3>¿Cómo vas?</h3>
+    <div class="seg" id="profile" role="group" aria-label="Cómo vas"></div>
+    <p class="hint" id="profileHint"></p>
     <div class="slider"><label for="walkMax">Máximo andando desde el coche</label><input type="range" id="walkMax" min="100" max="2000" step="50"><output id="walkMaxV"></output></div>
     <div class="slider"><label for="climbMax">Desnivel máximo entre el coche y el punto</label><input type="range" id="climbMax" min="20" max="300" step="10"><output id="climbMaxV"></output></div>
-    <label class="toggle"><input type="checkbox" id="avoidCrowd"><span>Evitar donde va todo el mundo</span><small>Penaliza lo que queda cerca del asfalto, de pueblos y de zonas con muchos caminos, y exige andar un mínimo</small></label>
-    <div class="slider"><label for="minWalk">Mínimo andando desde el coche</label><input type="range" id="minWalk" min="0" max="1000" step="50"><output id="minWalkV"></output></div>
-    <div class="slider"><label for="shade">Peso de las umbrías</label><input type="range" id="shade" min="0" max="2" step="0.1"><output id="shadeV"></output></div>
-    <div class="slider"><label for="hollow">Peso de las vaguadas</label><input type="range" id="hollow" min="0" max="2" step="0.1"><output id="hollowV"></output></div>
+    <h3>Tu coche</h3>
+    <div class="seg" id="carLevel" role="group" aria-label="Caminos que acepta tu coche"></div>
+    <p class="hint"><span id="carHint"></span> El estado de cada pista sale de OpenStreetMap; si falta, cuenta como «normal». En el mapa, toca un camino de color para valorarlo («bien», «al límite» o «no pasa»): tu valoración manda.<br>Azul: asfalto · verde: pista buena · naranja: normal · rojo: mala. Discontinuo: no llegas con tu coche.</p>
+    <h3>Gente</h3>
+    <label class="toggle"><input type="checkbox" id="avoidCrowd"><span>Evitar lo concurrido</span><small id="crowdHint"></small></label>
+    <h3>Mapa</h3>
     <div class="slider"><label for="minLevel">Mostrar en el mapa</label><input type="range" id="minLevel" min="1" max="3" step="1"><output id="minLevelV"></output></div>
     <div class="slider"><label for="opacity">Opacidad de la capa</label><input type="range" id="opacity" min="0.2" max="1" step="0.05"><output id="opacityV"></output></div>
+    <div class="row"><button id="resetPrefs" class="btn" type="button">Valores por defecto</button><button id="refreshMeteo" class="btn" type="button">Actualizar meteo</button></div>
     <h3>Zonas guardadas sin cobertura</h3>
     <ol id="offZones" class="finds"></ol>
     <p class="hint">Cada zona guarda los caminos y el mapa topográfico del ICGC (de 15 a 50 MB según el tamaño). Sin cobertura, busca puntos, rutas y guía igual que con conexión; el GPS funciona sin datos. Usa el mapa «Topográfico (ICGC)».</p>
-    <div class="row"><button id="resetPrefs" class="btn" type="button">Valores por defecto</button><button id="refreshMeteo" class="btn" type="button">Actualizar meteo</button></div>
     <h3>App</h3>
     <div class="row"><button id="checkUpdate" class="btn" type="button">Buscar actualización</button><button id="reinstall" class="btn" type="button">Reinstalar la app</button></div>
     <p class="hint"><b id="appVersion"></b>. «Reinstalar» vuelve a descargar la app entera. Conserva el diario, los ajustes y las zonas guardadas.</p>
@@ -132,16 +129,18 @@
         <li>Lo lejos que estás del borde del bosque.</li>
         <li>La pendiente, la orientación y las vaguadas.</li>
       </ul>
+      <p>Estos factores son fijos: tus ajustes no los cambian. Cuando me pases el diario, los afino con lo que encuentras.</p>
       <p>Los <b>colores del mapa</b> son relativos: marcan el 3 %, el 10 % y el 25 % mejor del bosque del Bages y el Berguedà en ese día. Un día malo también hay rojo, así que mira el nivel en la parte inferior.</p>
       <p>«Buscar puntos» descarga los caminos de OpenStreetMap de la zona que ves y calcula:</p>
       <ul>
         <li>Dónde puedes dejar el coche, según los caminos que aceptas.</li>
         <li>La <b>ruta a pie</b> real, en cuadritos de 10 m. No cruza vías de tren, autovías, ríos, canales, vallas, cortados, agua ni zonas industriales, salvo por un camino que pase (puente, túnel o paso a nivel). Evita las pendientes muy fuertes y cuenta lo que sube y baja.</li>
         <li>Que el punto esté en <b>bosque adecuado de verdad</b>: el cuadrito y al menos el 60 % de lo que lo rodea (unos 60 m).</li>
-        <li>Que quede lejos de lo más pisado.</li>
+        <li>Que encaje con «Cómo vas»: distancia, desnivel y, con niños, terreno suave.</li>
       </ul>
       <p>La guía a pie sigue esa ruta.</p>
-      <p><b>Afluencia probable.</b> No hay datos reales de cuánta gente busca setas en cada sitio. La app la estima con lo que suele atraer a la gente: estar cerca del asfalto o del coche, cerca de pueblos o urbanizaciones, o en una zona con muchos caminos. Con «Evitar donde va todo el mundo» penaliza esas zonas y exige andar un mínimo.</p>
+      <p><b>Planear</b> compara las zonas por lo mejor que tienen a tu alcance: sitios a menos de tu máximo andando (en línea recta, con margen) de una vía por la que pasa tu coche y, con niños, en terreno suave.</p>
+      <p><b>Afluencia probable.</b> No hay datos reales de cuánta gente busca setas en cada sitio. La app la estima con lo que suele atraer a la gente: estar cerca del asfalto o del coche, cerca de pueblos o urbanizaciones, o en una zona con muchos caminos. Con «Evitar lo concurrido» penaliza esas zonas, busca puntos a más de 150 m de caminos y senderos y exige algo de paseo (siempre menos que tu máximo andando).</p>
       <p>Datos: Meteocat (XEMA, datos abiertos de la Generalitat), Open-Meteo, ICGC (modelo del terreno y cubiertas del suelo 2024, CC BY 4.0), OpenStreetMap. Es una estimación, no una garantía. Respeta los carteles, las fincas privadas y las batidas de caza.</p>
       <p id="version" class="hint"></p>
     </details>

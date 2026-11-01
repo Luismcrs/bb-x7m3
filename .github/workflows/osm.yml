@@ -5,7 +5,7 @@ on:
     - cron: "17 3 1 * *"
   push:
     branches: [main]
-    paths: ["tools/osm_tiles_pbf.py", ".github/workflows/osm.yml"]
+    paths: ["tools/osm_tiles_pbf.py", "tools/road_raster.py", ".github/workflows/osm.yml"]
 permissions:
   contents: write
   statuses: write
@@ -27,7 +27,7 @@ jobs:
       - name: Herramientas
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
-          pip install -q osmium
+          pip install -q osmium numpy scipy pillow
       - name: Teselas desde el extracto de Geofabrik
         env:
           GH_TOKEN: ${{ github.token }}
@@ -35,13 +35,15 @@ jobs:
           gh api repos/${{ github.repository }}/statuses/${{ github.sha }} -f state=pending -f context=osm -f description="descargando el extracto de Cataluña" > /dev/null || true
           python tools/osm_tiles_pbf.py | tee log.txt
           gh api repos/${{ github.repository }}/statuses/${{ github.sha }} -f state=success -f context=osm -f description="$(tail -1 log.txt | cut -c1-139)" > /dev/null || true
+      - name: Distancia a donde dejar el coche (para Planear)
+        run: python tools/road_raster.py
       - name: Publicar en main y gh-pages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/osm2
+          git add data/osm2 data/road.png
           git commit -q -m "Caminos de OpenStreetMap actualizados ($(date +%Y-%m-%d))" || exit 0
           git pull -q --rebase origin main
           git push -q origin HEAD:main
