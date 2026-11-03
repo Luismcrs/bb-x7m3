@@ -1,10 +1,10 @@
-"""Caminos de OpenStreetMap del Bages y el Berguedà en teselas estáticas (data/osm/), a partir del extracto de
+"""Caminos de OpenStreetMap del Bages, el Berguedà y el Moianès en teselas estáticas (data/osm/), a partir del extracto de
 Cataluña de Geofabrik (pensado para descargas grandes; no depende de los servidores de Overpass).
 Mismos filtros que la consulta de la app. Formato 2 (compacto): cada tesela {"w": [[id, tags, nodos, coords], ...], "p": [...]},
 con los nodos como diferencias entre ids seguidos y las coordenadas en cienmilésimas de grado (~1 m), también como diferencias."""
 import json, os, re, time, math, urllib.request, subprocess, sys
 import osmium
-S0, N0, W0, E0 = 41.55, 42.37, 1.50, 2.12
+S0, N0, W0, E0 = 41.55, 42.37, 1.50, 2.28  # hasta 2.28 desde que se añadió el Moianès
 DLAT, DLON = 0.06, 0.08
 ROWS, COLS = math.ceil(round((N0 - S0) / DLAT, 6)), math.ceil(round((E0 - W0) / DLON, 6))
 HERE = os.path.dirname(os.path.abspath(__file__)); OUT = os.path.join(HERE, '..', 'data', 'osm2')  # formato 2; las versiones viejas de la app leen data/osm
