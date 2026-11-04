@@ -1,6 +1,6 @@
 # Bolets Bages
 
-App web personal para buscar setas en el Bages y el Berguedà. Calcula en el móvil la probabilidad de encontrar rovelló, pinetell, llenega negra, fredolic o camagroc para cada cuadrito de unos 30 m. Usa:
+App web personal para buscar setas en el Bages, el Berguedà y el Moianès. Calcula en el móvil la probabilidad de encontrar rovelló, pinetell, llenega negra, fredolic o camagroc para cada cuadrito de unos 30 m. Usa:
 
 - la meteo de Meteocat en directo (todas las estaciones de la zona) y la lluvia por zona y la humedad del suelo del modelo de Open-Meteo, corregidas con las estaciones;
 - el modelo del terreno del ICGC (MET);

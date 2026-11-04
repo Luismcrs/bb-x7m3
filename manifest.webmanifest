@@ -1,7 +1,7 @@
 {
-  "name": "Bolets Bages y Berguedà",
+  "name": "Bolets Bages, Berguedà y Moianès",
   "short_name": "Bolets",
-  "description": "Dónde buscar setas en el Bages y el Berguedà, con meteo en directo y GPS.",
+  "description": "Dónde buscar setas en el Bages, el Berguedà y el Moianès, con meteo en directo y GPS.",
   "lang": "es",
   "start_url": "./",
   "scope": "./",

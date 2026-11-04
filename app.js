@@ -1,6 +1,6 @@
-/* Bolets Bages y Berguedà · app */
+/* Bolets Bages, Berguedà y Moianès · app */
 "use strict";
-const VERSION = "1.17 · 1-11-2026";
+const VERSION = "1.18 · 4-11-2026";
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -186,7 +186,7 @@ async function lcClassAt(lat, lon) {
 }
 
 /* ---------- Meteo (Meteocat en directo, con copia de seguridad) ---------- */
-/* Estaciones de Meteocat de la zona (Bages, Berguedà y alrededores), leídas de los metadatos de la XEMA.
+/* Estaciones de Meteocat de la zona (Bages, Berguedà, Moianès y alrededores), leídas de los metadatos de la XEMA.
    Se guardan una semana. Si no se pueden leer, se usan las de la lista fija. */
 const ST_BOX = { s: 41.42, n: 42.5, w: 1.3, e: 2.32 };
 async function discoverStations() {
@@ -239,10 +239,11 @@ async function loadMeteo(force) {
     else { App.raw = await fetchJSON("data/meteo-fallback.json"); toast("Sin conexión con Meteocat: uso datos guardados del " + App.raw.lastDay); }
   }
 }
-/* Lluvia por zona: rejilla de 91 puntos (cada ~7 km) del modelo de Open-Meteo, corregida con las estaciones de Meteocat */
-const FIELD_BOX = { s: 41.62, n: 42.32, w: 1.58, e: 2.06, dlat: .06, dlon: .08 };
+/* Lluvia por zona: rejilla de 94 puntos (cada ~7 km) del modelo de Open-Meteo, corregida con las estaciones de Meteocat */
+// la segunda caja añade dos columnas al este para el Moianès (al final, para no cambiar los códigos de los demás puntos)
+const FIELD_BOX = { s: 41.62, n: 42.32, w: 1.58, e: 2.06, dlat: .06, dlon: .08 }, FIELD_BOX2 = { s: 41.68, n: 41.92, w: 2.14, e: 2.22, dlat: .06, dlon: .08 };
 async function addModelField(raw) {
-  const pts = fieldPoints(FIELD_BOX), codes = Object.keys(raw.stations).filter(c => STATIONS[c] && !STATIONS[c].model);
+  const pts = fieldPoints(FIELD_BOX).concat(fieldPoints(FIELD_BOX2)), codes = Object.keys(raw.stations).filter(c => STATIONS[c] && !STATIONS[c].model);
   const all = pts.concat(codes.map(c => ({ lat: STATIONS[c].lat, lon: STATIONS[c].lon })));
   const ll = a => "latitude=" + a.map(p => p.lat.toFixed(3)).join(",") + "&longitude=" + a.map(p => p.lon.toFixed(3)).join(",");
   const base = "https://api.open-meteo.com/v1/forecast?" , tz = "&timezone=Europe%2FMadrid";
@@ -407,7 +408,7 @@ function dimSpots(on) {
 async function analyze(opt) {
   if (!App.scores || analyzing) return;
   opt = opt && opt.box ? opt : {};
-  const box = opt.box || analysisBox(); if (!box) { toast("Esa zona queda fuera del Bages y el Berguedà"); return; }
+  const box = opt.box || analysisBox(); if (!box) { toast("Esa zona queda fuera del Bages, el Berguedà y el Moianès"); return; }
   App.anaCtx = { zone: opt.zone || null, day: App.date ? dayKey(App.date) : null };
   const btn = $("#analyzeBtn"), hd = $("#spotsHead"), status = t => { btn.textContent = t; hd.textContent = (opt.zone ? opt.zone + ": " : "") + t; hd.hidden = false; };
   if (opt.zone) $("#spots").innerHTML = "";
@@ -576,7 +577,7 @@ function showSpotPopup(i) {
 map.on("click", e => {
   if (!App.scores) return;
   const ci = cellInfo(e.latlng.lat, e.latlng.lng); const div = document.createElement("div"); div.className = "pop";
-  if (!ci) { div.textContent = "Fuera del Bages y el Berguedà."; }
+  if (!ci) { div.textContent = "Fuera del Bages, el Berguedà y el Moianès."; }
   else {
     const d = dirIdx(ci.aspect);
     div.innerHTML = "<b>" + (ci.v > 0 ? ABS_NAMES[ci.level] + " · índice " + fmt(ci.v) + " de 100" : "Sin bosque o terreno no apto") + "</b>" + (ci.v > 0 ? "<div>" + ["", "Entre el 25 % mejor del bosque hoy", "Entre el 10 % mejor del bosque hoy", "Entre el 3 % mejor del bosque hoy"][ci.rel] + "</div>" : "") + "<dl><dt>Terreno</dt><dd>" + (ci.slope < 6 ? "llano" : ci.slope < 12 ? "suave" : "inclinado") + " (" + fmt(ci.slope) + "°)" + (ci.slope >= 4 ? ", mira al " + DIRL[d] : "") + "</dd><dt>Altitud</dt><dd>" + fmt(ci.z) + " m</dd><dt>Bosque</dt><dd>" + fmt(ci.tree * 100) + " % arbolado" + (ci.edge > 0 ? ", " + fmtDist(ci.edge) + " dentro" : "") + "</dd><dt>Aquí mismo</dt><dd class=\"lcc\">…</dd>" + (() => { const pi = App.grid.pineOf(ci.k); return pi && pi.f > .2 ? "<dt>Pinar</dt><dd>" + PINE_NAMES[pi.t] + " (mapa forestal)</dd>" : ""; })() + "</dl><div class=\"acts\"></div>";
@@ -900,7 +901,7 @@ function renderDiary() {
 }
 function confirmDel(f) { if (f._arm) return true; f._arm = true; toast("Toca × otra vez para borrarlo"); setTimeout(() => f._arm = false, 4000); return false; }
 $("#exportBtn").onclick = async () => {
-  const data = JSON.stringify({ app: "Bolets Bages y Berguedà", exported: new Date().toISOString(), diary: App.diary }, null, 1);
+  const data = JSON.stringify({ app: "Bolets Bages, Berguedà y Moianès", exported: new Date().toISOString(), diary: App.diary }, null, 1);
   const file = new File([data], "bolets-diario-" + dayKey(new Date()) + ".json", { type: "application/json" });
   if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: "Diario de bolets" }); return; } catch (e) { if (e.name === "AbortError") return; } }
   const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
